@@ -1,63 +1,41 @@
-# EMB RAG Chatbot
+# EMB RAG Chatbot 🌿
 
-A RAG (Retrieval Augmented Generation) chatbot built on the EMB Global tech stack.
-Upload PDF, TXT, or MD files and ask questions about them.
+A **RAG (Retrieval Augmented Generation)** chatbot built on the EMB Global AI delivery stack. Upload PDF, TXT, or MD documents and ask questions. Get answers with source citations.
+
+---
+
+## What is RAG?
+
+RAG stands for Retrieval Augmented Generation. Instead of the AI guessing answers, it:
+1. Reads your uploaded document
+2. Finds the most relevant parts
+3. Answers based only on those parts
+4. Shows you exactly which part it used (citations)
+
+---
 
 ## Tech Stack
 
-- **Backend**: FastAPI + FAISS + sentence-transformers
-- **Frontend**: React + Vite
-- **AI Model**: Llama 3.1 via Groq (free)
-- **Document Support**: PDF, TXT, MD
+| Layer | Tool | Purpose |
+|-------|------|---------|
+| Frontend | React + Vite | Chat UI |
+| Backend | FastAPI | Python API server |
+| Embeddings | sentence-transformers | Convert text to vectors |
+| Vector Search | FAISS | Find similar chunks |
+| LLM | Llama 3.1 via Groq | Generate answers |
+| PDF Parsing | pypdf | Extract text from PDFs |
 
-## Setup Instructions
-
-### 1. Clone the repository
-
-git clone https://github.com/yourusername/chatbot-techstack.git
-cd chatbot-techstack
-
-### 2. Backend Setup
-
-cd backend
-python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# Mac/Linux
-source venv/bin/activate
-
-pip install -r requirements.txt
-
-### 3. Create your .env file
-
-Copy .env.example to .env and add your key:
-
-GROQ_API_KEY=your_groq_api_key_here
-
-Get your free key from: https://console.groq.com
-
-### 4. Run the backend
-
-python -m uvicorn main:app --reload --port 8000
-
-### 5. Frontend Setup
-
-cd ../frontend
-npm install
-npm run dev
-
-### 6. Open the app
-
-Go to http://localhost:5173
-
-Upload a PDF or TXT file and start asking questions!
+---
 
 ## Features
 
 - Upload PDF, TXT, MD documents
-- Ask questions about uploaded documents
-- Citations showing which part of document was used
+- Ask questions in natural language
+- Answers grounded only in your document
+- Source citations with every answer
 - Multi-turn conversation memory
-- Dark theme UI
+- Completely free AI (Groq API)
+
+---
+
+## Project Structure
