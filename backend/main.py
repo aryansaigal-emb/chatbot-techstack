@@ -250,7 +250,11 @@ def chat(req: ChatRequest):
 
     # Step 3: Call Groq
     response = groq_client.chat.completions.create(
+<<<<<<< HEAD
         model=model="llama-3.1-70b-versatile",
+=======
+        model="mixtral-8x7b-32768",
+>>>>>>> conflict-branch-two
         messages=messages,
         max_tokens=1024,
         temperature=0.3,
