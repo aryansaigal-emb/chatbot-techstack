@@ -145,7 +145,7 @@ export default function InputBar({ onSend, loading }) {
           textAlign: 'center',
           marginTop: '8px',
         }}>
-          EMB RAG Chatbot · Claude Sonnet via OpenRouter · PDF + TXT supported
+         EMB RAG Chatbot · Llama 3.1 via Groq · PDF, TXT, MD supported · Free AI
         </div>
       </div>
     </div>
