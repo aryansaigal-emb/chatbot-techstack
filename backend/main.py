@@ -18,7 +18,6 @@ from pydantic import BaseModel
 # ── Load API key ──────────────────────────────────────────────────
 load_dotenv()
 load_dotenv()
-import os
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY not found in .env file")
@@ -251,7 +250,7 @@ def chat(req: ChatRequest):
 
     # Step 3: Call Groq
     response = groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="llama-3.1-70b-versatile",
         messages=messages,
         max_tokens=1024,
         temperature=0.3,
