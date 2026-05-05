@@ -78,6 +78,13 @@ class SignupRequest(BaseModel):
     user_id: str
     passcode: str
 
+class UserLookupRequest(BaseModel):
+    user_id: str
+
+class ResetPasswordRequest(BaseModel):
+    user_id: str
+    new_passcode: str
+
 class LoginResponse(BaseModel):
     success: bool
     token: str
@@ -110,6 +117,27 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
             detail="Invalid or expired session. Please login again."
         )
     return active_sessions[token]
+
+
+def get_supabase_users(user_id: str, columns: str = "*") -> List[dict]:
+    try:
+        result = supabase.table("users").select(columns).eq(
+            "user_id", user_id
+        ).execute()
+
+        if not result.data:
+            result = supabase.table("users").select(columns).ilike(
+                "user_id", user_id
+            ).execute()
+
+        return result.data or []
+    except Exception as e:
+        print(f"Could not check Supabase users: {e}")
+        return []
+
+
+def user_exists(user_id: str) -> bool:
+    return bool(get_supabase_users(user_id, "user_id")) or user_id in DEV_USERS
 
 
 # ================================================================
@@ -219,22 +247,7 @@ def signup(req: SignupRequest):
         if len(passcode) != 6 or not passcode.isdigit():
             raise HTTPException(status_code=400, detail="Passcode must be 6 digits.")
 
-        existing_users = []
-        try:
-            result = supabase.table("users").select("user_id").eq(
-                "user_id", user_id
-            ).execute()
-
-            if not result.data:
-                result = supabase.table("users").select("user_id").ilike(
-                    "user_id", user_id
-                ).execute()
-
-            existing_users = result.data or []
-        except Exception as e:
-            print(f"Could not check Supabase users during signup: {e}")
-
-        if existing_users or user_id in DEV_USERS:
+        if user_exists(user_id):
             raise HTTPException(status_code=409, detail="User ID already exists.")
 
         try:
@@ -260,26 +273,73 @@ def signup(req: SignupRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/forgot-password")
+def forgot_password(req: UserLookupRequest):
+    try:
+        user_id = req.user_id.strip().upper()
+
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID is required.")
+
+        if not user_exists(user_id):
+            raise HTTPException(status_code=404, detail="User ID not found.")
+
+        return {
+            "success": True,
+            "message": "User found. You can reset your passcode now.",
+            "user_id": user_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/reset-password")
+def reset_password(req: ResetPasswordRequest):
+    try:
+        user_id = req.user_id.strip().upper()
+        new_passcode = req.new_passcode.strip()
+
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID is required.")
+        if len(new_passcode) != 6 or not new_passcode.isdigit():
+            raise HTTPException(status_code=400, detail="New passcode must be 6 digits.")
+        if not user_exists(user_id):
+            raise HTTPException(status_code=404, detail="User ID not found.")
+
+        supabase_users = get_supabase_users(user_id, "user_id")
+        if supabase_users:
+            try:
+                supabase.table("users").update({
+                    "passcode": new_passcode,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("user_id", supabase_users[0]["user_id"]).execute()
+            except Exception as e:
+                print(f"Could not reset passcode in Supabase, using local dev user: {e}")
+
+        DEV_USERS[user_id] = new_passcode
+
+        return {
+            "success": True,
+            "message": "Passcode reset successful. Please login.",
+            "user_id": user_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/login", response_model=LoginResponse)
 def login(req: LoginRequest):
     try:
         user_id = req.user_id.strip().upper()
         passcode = req.passcode.strip()
 
-        users = []
-        try:
-            result = supabase.table("users").select("*").eq(
-                "user_id", user_id
-            ).execute()
-
-            if not result.data:
-                result = supabase.table("users").select("*").ilike(
-                    "user_id", user_id
-                ).execute()
-
-            users = result.data or []
-        except Exception as e:
-            print(f"Could not check Supabase users during login: {e}")
+        users = get_supabase_users(user_id)
 
         if users:
             user = users[0]

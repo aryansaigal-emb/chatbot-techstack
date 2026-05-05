@@ -4,6 +4,7 @@ export default function Login({ onLogin }) {
   const [mode, setMode] = useState('signup')
   const [userId, setUserId] = useState('')
   const [passcode, setPasscode] = useState('')
+  const [newPasscode, setNewPasscode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -17,6 +18,8 @@ export default function Login({ onLogin }) {
 
   const switchMode = (nextMode) => {
     setMode(nextMode)
+    setPasscode('')
+    setNewPasscode('')
     resetMessages()
   }
 
@@ -96,11 +99,89 @@ export default function Login({ onLogin }) {
     }
   }
 
+  const handleForgotPassword = async () => {
+    if (!normalizedUserId) {
+      setError('Please enter your User ID')
+      return
+    }
+
+    setLoading(true)
+    resetMessages()
+
+    try {
+      const res = await fetch('/api/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: normalizedUserId }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.detail || 'User not found')
+        return
+      }
+
+      setMode('reset')
+      setNotice('User found. Enter a new 6-digit passcode.')
+    } catch (err) {
+      setError('Cannot connect to server. Make sure backend is running.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleResetPassword = async () => {
+    if (!normalizedUserId || !newPasscode.trim()) {
+      setError('Please enter User ID and new passcode')
+      return
+    }
+
+    if (!/^\d{6}$/.test(newPasscode.trim())) {
+      setError('New passcode must be 6 digits')
+      return
+    }
+
+    setLoading(true)
+    resetMessages()
+
+    try {
+      const res = await fetch('/api/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: normalizedUserId,
+          new_passcode: newPasscode.trim(),
+        }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.detail || 'Password reset failed')
+        return
+      }
+
+      setPasscode(newPasscode.trim())
+      setNewPasscode('')
+      setMode('login')
+      setNotice('Passcode reset successful. Login with your new passcode.')
+    } catch (err) {
+      setError('Cannot connect to server. Make sure backend is running.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleSubmit = () => {
     if (mode === 'signup') {
       handleSignup()
-    } else {
+    } else if (mode === 'login') {
       handleLogin()
+    } else if (mode === 'forgot') {
+      handleForgotPassword()
+    } else {
+      handleResetPassword()
     }
   }
 
@@ -109,6 +190,31 @@ export default function Login({ onLogin }) {
   }
 
   const isSignup = mode === 'signup'
+  const isLogin = mode === 'login'
+  const isForgot = mode === 'forgot'
+  const isReset = mode === 'reset'
+  const modeContent = {
+    signup: {
+      title: 'Create Your Account',
+      subtitle: 'Signup first, then login to enter the chatbot',
+      button: 'Create Account',
+    },
+    login: {
+      title: 'Welcome Back',
+      subtitle: 'Login to open the chatbot',
+      button: 'Sign In',
+    },
+    forgot: {
+      title: 'Find Your Account',
+      subtitle: 'Enter your User ID to start passcode reset',
+      button: 'Find Account',
+    },
+    reset: {
+      title: 'Reset Passcode',
+      subtitle: 'Choose a new 6-digit passcode',
+      button: 'Reset Passcode',
+    },
+  }[mode]
 
   return (
     <div style={{
@@ -167,7 +273,7 @@ export default function Login({ onLogin }) {
           borderRadius: '10px',
           border: '1px solid #242424',
         }}>
-          {['signup', 'login'].map(item => (
+          {['signup', 'login', 'forgot', 'reset'].map(item => (
             <button
               key={item}
               type="button"
@@ -181,19 +287,20 @@ export default function Login({ onLogin }) {
                 fontWeight: '700',
                 cursor: 'pointer',
                 textTransform: 'capitalize',
+                fontSize: '13px',
               }}
             >
-              {item}
+              {item === 'forgot' ? 'Forgot' : item === 'reset' ? 'Reset' : item}
             </button>
           ))}
         </div>
 
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
           <div style={{ fontSize: '20px', fontWeight: '700', color: '#ececec' }}>
-            {isSignup ? 'Create Your Account' : 'Welcome Back'}
+            {modeContent.title}
           </div>
           <div style={{ fontSize: '13px', color: '#777', marginTop: '6px' }}>
-            {isSignup ? 'Signup first, then login to enter the chatbot' : 'Login to open the chatbot'}
+            {modeContent.subtitle}
           </div>
         </div>
 
@@ -231,7 +338,45 @@ export default function Login({ onLogin }) {
           />
         </div>
 
-        <div style={{ marginBottom: '20px' }}>
+        {(isSignup || isLogin) && (
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{
+              display: 'block',
+              fontSize: '12px',
+              color: '#888',
+              marginBottom: '6px',
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+            }}>
+              Passcode
+            </label>
+            <input
+              type="password"
+              value={passcode}
+              onChange={e => setPasscode(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Enter 6-digit passcode"
+              maxLength={6}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                padding: '12px 14px',
+                background: '#111',
+                border: '1px solid #2a2a2a',
+                borderRadius: '8px',
+                color: '#ececec',
+                fontSize: '14px',
+                outline: 'none',
+                letterSpacing: '4px',
+              }}
+              onFocus={e => e.target.style.borderColor = '#10a37f'}
+              onBlur={e => e.target.style.borderColor = '#2a2a2a'}
+            />
+          </div>
+        )}
+
+        {isReset && (
+          <div style={{ marginBottom: '20px' }}>
           <label style={{
             display: 'block',
             fontSize: '12px',
@@ -240,14 +385,14 @@ export default function Login({ onLogin }) {
             letterSpacing: '1px',
             textTransform: 'uppercase',
           }}>
-            Passcode
+            New Passcode
           </label>
           <input
             type="password"
-            value={passcode}
-            onChange={e => setPasscode(e.target.value)}
+            value={newPasscode}
+            onChange={e => setNewPasscode(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Enter 6-digit passcode"
+            placeholder="Enter new 6-digit passcode"
             maxLength={6}
             style={{
               width: '100%',
@@ -265,6 +410,7 @@ export default function Login({ onLogin }) {
             onBlur={e => e.target.style.borderColor = '#2a2a2a'}
           />
         </div>
+        )}
 
         {error && (
           <div style={{
@@ -309,7 +455,7 @@ export default function Login({ onLogin }) {
             cursor: loading ? 'not-allowed' : 'pointer',
           }}
         >
-          {loading ? 'Please wait...' : isSignup ? 'Create Account' : 'Sign In'}
+          {loading ? 'Please wait...' : modeContent.button}
         </button>
 
         <div style={{
@@ -318,24 +464,13 @@ export default function Login({ onLogin }) {
           color: '#777',
           fontSize: '13px',
         }}>
-          {isSignup ? 'Already signed up?' : 'Need an account?'}{' '}
-          <button
-            type="button"
-            onClick={() => switchMode(isSignup ? 'login' : 'signup')}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#10a37f',
-              cursor: 'pointer',
-              fontWeight: '700',
-              padding: 0,
-            }}
-          >
-            {isSignup ? 'Login' : 'Signup'}
-          </button>
+          {isSignup && <>Already signed up? <InlineButton onClick={() => switchMode('login')}>Login</InlineButton></>}
+          {isLogin && <>Forgot your passcode? <InlineButton onClick={() => switchMode('forgot')}>Reset it</InlineButton></>}
+          {isForgot && <>Remembered it? <InlineButton onClick={() => switchMode('login')}>Login</InlineButton></>}
+          {isReset && <>Ready now? <InlineButton onClick={() => switchMode('login')}>Login</InlineButton></>}
         </div>
 
-        {!isSignup && (
+        {isLogin && (
           <div style={{
             marginTop: '20px',
             padding: '12px',
@@ -371,5 +506,24 @@ export default function Login({ onLogin }) {
         )}
       </div>
     </div>
+  )
+}
+
+function InlineButton({ children, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        color: '#10a37f',
+        cursor: 'pointer',
+        fontWeight: '700',
+        padding: 0,
+      }}
+    >
+      {children}
+    </button>
   )
 }
