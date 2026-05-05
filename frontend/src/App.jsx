@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
-import Login from './Login.jsx'
-import Sidebar from './components/Sidebar.jsx'
+import Login from './login.jsx'
+import Sidebar from './components/sidebar.jsx'
 import ChatWindow from './components/ChatWindow.jsx'
 import InputBar from './components/InputBar.jsx'
 import { apiUrl } from './api.js'
