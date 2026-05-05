@@ -1,39 +1,60 @@
 # ================================================================
 #  EMB RAG Chatbot — Backend
-#  FastAPI + FAISS + sentence-transformers + Groq (Free)
+#  FastAPI + FAISS + sentence-transformers + Groq + Supabase Auth
 # ================================================================
 
 import os
 import io
 from typing import List
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
 from groq import Groq
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from supabase import create_client, Client
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+import secrets
 
-# ── Load API key ──────────────────────────────────────────────────
-load_dotenv()
-load_dotenv()
+# ── Load environment variables ────────────────────────────────────
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
 if not GROQ_API_KEY:
-    raise RuntimeError("GROQ_API_KEY not found in .env file")
+    raise RuntimeError("GROQ_API_KEY not found in .env")
+if not SUPABASE_URL:
+    raise RuntimeError("SUPABASE_URL not found in .env")
+if not SUPABASE_KEY:
+    raise RuntimeError("SUPABASE_KEY not found in .env")
+
 # ── Groq client ───────────────────────────────────────────────────
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ── Load embedding model ──────────────────────────────────────────
+# ── Supabase client ───────────────────────────────────────────────
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ── Embedding model ───────────────────────────────────────────────
 print("Loading embedding model...")
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 EMBED_DIM = 384
 
 # ── FAISS index ───────────────────────────────────────────────────
 index = faiss.IndexFlatIP(EMBED_DIM)
-
-# ── Metadata store ────────────────────────────────────────────────
 metadata_store: List[dict] = []
+
+# ── Active sessions ───────────────────────────────────────────────
+active_sessions = {}
+
+DEV_USERS = {
+    "EMB001": "123456",
+    "EMB002": "654321",
+    "EMB003": "111222",
+}
 
 # ── FastAPI app ───────────────────────────────────────────────────
 app = FastAPI(title="EMB RAG Chatbot")
@@ -46,7 +67,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+security = HTTPBearer()
+
 # ── Request/Response models ───────────────────────────────────────
+class LoginRequest(BaseModel):
+    user_id: str
+    passcode: str
+
+class SignupRequest(BaseModel):
+    user_id: str
+    passcode: str
+
+class LoginResponse(BaseModel):
+    success: bool
+    token: str
+    message: str
+
 class Message(BaseModel):
     role: str
     content: str
@@ -63,31 +99,40 @@ class ChatResponse(BaseModel):
 
 
 # ================================================================
-#  HELPER FUNCTIONS
+#  AUTH FUNCTIONS
+# ================================================================
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    if token not in active_sessions:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired session. Please login again."
+        )
+    return active_sessions[token]
+
+
+# ================================================================
+#  RAG HELPER FUNCTIONS
 # ================================================================
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Extract text from PDF using pypdf"""
     try:
         from pypdf import PdfReader
         pdf_file = io.BytesIO(file_bytes)
         reader = PdfReader(pdf_file)
-
         all_text = []
         for page in reader.pages:
             page_text = page.extract_text()
             if page_text and page_text.strip():
                 all_text.append(page_text)
-
         full_text = "\n\n".join(all_text)
-
         if not full_text.strip():
             raise HTTPException(
                 status_code=400,
-                detail="Could not extract text from PDF. It may be a scanned image PDF."
+                detail="Could not extract text. PDF may be image-based."
             )
         return full_text
-
     except HTTPException:
         raise
     except Exception as e:
@@ -98,7 +143,6 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
 
 def chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> List[str]:
-    """Split text into overlapping chunks"""
     words = text.split()
     chunks = []
     i = 0
@@ -110,7 +154,6 @@ def chunk_text(text: str, chunk_size: int = 300, overlap: int = 50) -> List[str]
 
 
 def embed(texts: List[str]) -> np.ndarray:
-    """Convert texts to normalized vectors"""
     vectors = embedder.encode(texts, convert_to_numpy=True)
     norms = np.linalg.norm(vectors, axis=1, keepdims=True)
     normalized = vectors / (norms + 1e-9)
@@ -118,35 +161,29 @@ def embed(texts: List[str]) -> np.ndarray:
 
 
 def retrieve(query: str, top_k: int = 4) -> List[dict]:
-    """Find most relevant chunks for a query"""
     if index.ntotal == 0:
         return []
-
     q_vec = embed([query])
     scores, positions = index.search(q_vec, min(top_k, index.ntotal))
-
     results = []
     for score, pos in zip(scores[0], positions[0]):
         if pos == -1:
             continue
-        chunk_data = metadata_store[pos]
         results.append({
-            "text": chunk_data["text"],
-            "source": chunk_data["source"],
+            "text": metadata_store[pos]["text"],
+            "source": metadata_store[pos]["source"],
             "score": float(score),
         })
     return results
 
 
 def build_rag_prompt(query: str, chunks: List[dict]) -> str:
-    """Build prompt with document context"""
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
         context_parts.append(
             f"[Source {i} — {chunk['source']}]\n{chunk['text']}"
         )
     context = "\n\n---\n\n".join(context_parts)
-
     return f"""You are a helpful assistant. Answer ONLY using the context below.
 If the answer is not in the context, say: "I couldn't find that in the uploaded documents."
 Always cite sources as [Source 1], [Source 2], etc.
@@ -167,32 +204,155 @@ def health():
     return {
         "status": "ok",
         "chunks_indexed": index.ntotal,
-        "documents": list({m["source"] for m in metadata_store}),
         "model": "llama-3.1-8b-instant (Groq)",
     }
 
 
+@app.post("/signup")
+def signup(req: SignupRequest):
+    try:
+        user_id = req.user_id.strip().upper()
+        passcode = req.passcode.strip()
+
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID is required.")
+        if len(passcode) != 6 or not passcode.isdigit():
+            raise HTTPException(status_code=400, detail="Passcode must be 6 digits.")
+
+        existing_users = []
+        try:
+            result = supabase.table("users").select("user_id").eq(
+                "user_id", user_id
+            ).execute()
+
+            if not result.data:
+                result = supabase.table("users").select("user_id").ilike(
+                    "user_id", user_id
+                ).execute()
+
+            existing_users = result.data or []
+        except Exception as e:
+            print(f"Could not check Supabase users during signup: {e}")
+
+        if existing_users or user_id in DEV_USERS:
+            raise HTTPException(status_code=409, detail="User ID already exists.")
+
+        try:
+            supabase.table("users").insert({
+                "user_id": user_id,
+                "passcode": passcode,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+        except Exception as e:
+            print(f"Could not save signup to Supabase, using local dev user: {e}")
+
+        DEV_USERS[user_id] = passcode
+
+        return {
+            "success": True,
+            "message": "Signup successful. Please login.",
+            "user_id": user_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/login", response_model=LoginResponse)
+def login(req: LoginRequest):
+    try:
+        user_id = req.user_id.strip().upper()
+        passcode = req.passcode.strip()
+
+        users = []
+        try:
+            result = supabase.table("users").select("*").eq(
+                "user_id", user_id
+            ).execute()
+
+            if not result.data:
+                result = supabase.table("users").select("*").ilike(
+                    "user_id", user_id
+                ).execute()
+
+            users = result.data or []
+        except Exception as e:
+            print(f"Could not check Supabase users during login: {e}")
+
+        if users:
+            user = users[0]
+
+            if user["passcode"] != passcode:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Incorrect passcode."
+                )
+
+            try:
+                supabase.table("users").update(
+                    {"last_login": datetime.now(timezone.utc).isoformat()}
+                ).eq("user_id", user["user_id"]).execute()
+            except Exception as e:
+                print(f"Could not update last_login: {e}")
+        else:
+            if DEV_USERS.get(user_id) != passcode:
+                raise HTTPException(
+                    status_code=401,
+                    detail="User ID not found or incorrect passcode."
+                )
+
+        token = secrets.token_hex(32)
+        active_sessions[token] = user_id
+
+        return LoginResponse(
+            success=True,
+            token=token,
+            message=f"Welcome {user_id}!"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/logout")
+def logout(
+    user_id: str = Depends(verify_token),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    token = credentials.credentials
+    if token in active_sessions:
+        del active_sessions[token]
+    return {"message": "Logged out successfully"}
+
+
 @app.post("/ingest/file")
-async def ingest_file(file: UploadFile = File(...)):
-    """Accept PDF, TXT, MD files and index them"""
+async def ingest_file(
+    file: UploadFile = File(...),
+    user_id: str = Depends(verify_token)
+):
     filename = file.filename
     file_bytes = await file.read()
 
     if filename.lower().endswith(".pdf"):
         content = extract_text_from_pdf(file_bytes)
-
     elif filename.lower().endswith((".txt", ".md")):
         content = file_bytes.decode("utf-8", errors="ignore")
-
     else:
         raise HTTPException(
             status_code=400,
-            detail="Only .pdf, .txt, and .md files are supported."
+            detail="Only .pdf, .txt, and .md files supported."
         )
 
     chunks = chunk_text(content)
     if not chunks:
-        raise HTTPException(status_code=400, detail="No text found in file.")
+        raise HTTPException(
+            status_code=400,
+            detail="No text found in file."
+        )
 
     vectors = embed(chunks)
     index.add(vectors)
@@ -210,17 +370,14 @@ async def ingest_file(file: UploadFile = File(...)):
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
-    """Main RAG chat endpoint using Groq"""
-
-    # Step 1: Retrieve relevant chunks
+def chat(
+    req: ChatRequest,
+    user_id: str = Depends(verify_token)
+):
     chunks = retrieve(req.message, top_k=req.top_k)
     sources = list({c["source"] for c in chunks})
 
-    # Step 2: Build messages list
     messages = []
-
-    # System message
     messages.append({
         "role": "system",
         "content": (
@@ -230,14 +387,9 @@ def chat(req: ChatRequest):
         ),
     })
 
-    # Conversation history
     for msg in req.history[-8:]:
-        messages.append({
-            "role": msg.role,
-            "content": msg.content,
-        })
+        messages.append({"role": msg.role, "content": msg.content})
 
-    # RAG augmented user message
     if chunks:
         user_content = build_rag_prompt(req.message, chunks)
     else:
@@ -248,29 +400,22 @@ def chat(req: ChatRequest):
 
     messages.append({"role": "user", "content": user_content})
 
-    # Step 3: Call Groq
     response = groq_client.chat.completions.create(
-<<<<<<< HEAD
-        model=model="llama-3.1-70b-versatile",
-=======
-        model="mixtral-8x7b-32768",
->>>>>>> conflict-branch-two
+        model="llama-3.1-8b-instant",
         messages=messages,
         max_tokens=1024,
         temperature=0.3,
     )
 
-    answer = response.choices[0].message.content
-
     return ChatResponse(
-        answer=answer,
+        answer=response.choices[0].message.content,
         sources=sources,
         chunks_used=len(chunks),
     )
 
 
 @app.delete("/vectorstore")
-def clear_vectorstore():
+def clear_vectorstore(user_id: str = Depends(verify_token)):
     global index, metadata_store
     index = faiss.IndexFlatIP(EMBED_DIM)
     metadata_store.clear()
