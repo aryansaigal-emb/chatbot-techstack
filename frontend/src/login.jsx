@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { apiUrl } from './api.js'
 
 export default function Login({ onLogin }) {
   const [mode, setMode] = useState('signup')
@@ -38,7 +39,7 @@ export default function Login({ onLogin }) {
     resetMessages()
 
     try {
-      const res = await fetch('/api/signup', {
+      const res = await fetch(apiUrl('/signup'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -73,7 +74,7 @@ export default function Login({ onLogin }) {
     resetMessages()
 
     try {
-      const res = await fetch('/api/login', {
+      const res = await fetch(apiUrl('/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -109,7 +110,7 @@ export default function Login({ onLogin }) {
     resetMessages()
 
     try {
-      const res = await fetch('/api/forgot-password', {
+      const res = await fetch(apiUrl('/forgot-password'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: normalizedUserId }),
@@ -146,7 +147,7 @@ export default function Login({ onLogin }) {
     resetMessages()
 
     try {
-      const res = await fetch('/api/reset-password', {
+      const res = await fetch(apiUrl('/reset-password'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

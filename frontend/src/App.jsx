@@ -3,6 +3,7 @@ import Login from './Login.jsx'
 import Sidebar from './components/Sidebar.jsx'
 import ChatWindow from './components/ChatWindow.jsx'
 import InputBar from './components/InputBar.jsx'
+import { apiUrl } from './api.js'
 import './App.css'
 
 export default function App() {
@@ -45,7 +46,7 @@ export default function App() {
   // Logout
   const handleLogout = useCallback(async () => {
     try {
-      await fetch('/api/logout', {
+      await fetch(apiUrl('/logout'), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -70,7 +71,7 @@ export default function App() {
     setLoading(true)
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch(apiUrl('/chat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -143,7 +144,7 @@ export default function App() {
     formData.append('file', file)
 
     try {
-      const res = await fetch('/api/ingest/file', {
+      const res = await fetch(apiUrl('/ingest/file'), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,   // send token
