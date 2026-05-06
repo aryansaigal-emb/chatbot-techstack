@@ -5,13 +5,14 @@
 
 import os
 import io
+import json
 from typing import List
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
-from openai import OpenAI
+import requests
 from supabase import create_client, Client
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,11 +21,12 @@ from pydantic import BaseModel
 import secrets
 
 # ── Load environment variables ────────────────────────────────────
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "EMB RAG Chatbot")
+OPENROUTER_DATETIME_TIMEZONE = os.getenv("OPENROUTER_DATETIME_TIMEZONE", "Asia/Kolkata")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 FRONTEND_ORIGINS = [
@@ -41,15 +43,65 @@ if not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_KEY not found in .env")
 
 # ── OpenRouter client ─────────────────────────────────────────────
-openrouter_headers = {"X-Title": OPENROUTER_APP_NAME}
+OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+openrouter_headers = {
+    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+    "Content-Type": "application/json",
+    "X-Title": OPENROUTER_APP_NAME,
+}
 if OPENROUTER_SITE_URL:
     openrouter_headers["HTTP-Referer"] = OPENROUTER_SITE_URL
 
-llm_client = OpenAI(
-    api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1",
-    default_headers=openrouter_headers,
-)
+OPENROUTER_TOOLS = [
+    {
+        "type": "openrouter:datetime",
+        "parameters": {
+            "timezone": OPENROUTER_DATETIME_TIMEZONE,
+        },
+    },
+    {
+        "type": "openrouter:web_search",
+        "parameters": {
+            "engine": "auto",
+            "max_results": 5,
+            "max_total_results": 10,
+            "search_context_size": "medium",
+        },
+    },
+]
+
+
+def call_openrouter(messages: List[dict]) -> str:
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": messages,
+        "tools": OPENROUTER_TOOLS,
+        "max_tokens": 1024,
+        "temperature": 0.3,
+    }
+
+    try:
+        response = requests.post(
+            OPENROUTER_CHAT_URL,
+            headers=openrouter_headers,
+            data=json.dumps(payload),
+            timeout=60,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"OpenRouter request failed: {exc}") from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenRouter error {response.status_code}: {response.text[:500]}",
+        )
+
+    data = response.json()
+    try:
+        return data["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="Unexpected OpenRouter response.") from exc
 
 # ── Supabase client ───────────────────────────────────────────────
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -477,15 +529,10 @@ def chat(
 
     messages.append({"role": "user", "content": user_content})
 
-    response = llm_client.chat.completions.create(
-        model=OPENROUTER_MODEL,
-        messages=messages,
-        max_tokens=1024,
-        temperature=0.3,
-    )
+    answer = call_openrouter(messages)
 
     return ChatResponse(
-        answer=response.choices[0].message.content,
+        answer=answer,
         sources=sources,
         chunks_used=len(chunks),
     )
