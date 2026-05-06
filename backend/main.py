@@ -19,7 +19,7 @@ from supabase import create_client, Client
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import secrets
 
 # ── Load environment variables ────────────────────────────────────
@@ -237,7 +237,7 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    history: List[Message] = []
+    history: List[Message] = Field(default_factory=list)
     top_k: int = 4
 
 class ChatResponse(BaseModel):
@@ -591,7 +591,9 @@ def chat(
         "role": "system",
         "content": (
             "You are a helpful AI assistant. "
+            "Use the conversation history to understand follow-up questions, references, and user preferences. "
             "Answer questions based on provided document context. "
+            "If no document context is available, answer normally using conversation history and general knowledge. "
             "If tool context is provided, use that tool context directly. "
             "Be concise, accurate, and use clean markdown formatting. "
             "Use plain ASCII punctuation. "
@@ -612,13 +614,10 @@ def chat(
 
     if chunks:
         user_content = build_rag_prompt(req.message, chunks)
-    elif tools or wants_datetime_tool(req.message):
+    elif tools or wants_datetime_tool(req.message) or req.history:
         user_content = req.message
     else:
-        user_content = (
-            req.message
-            + "\n\n(No documents uploaded yet. Please upload a file first.)"
-        )
+        user_content = req.message
 
     messages.append({"role": "user", "content": user_content})
 

@@ -6,6 +6,19 @@ import InputBar from './components/InputBar.jsx'
 import { API_HEADERS, apiUrl } from './api.js'
 import './App.css'
 
+const CHAT_MESSAGES_KEY = 'chat_messages'
+const CHAT_HISTORY_KEY = 'chat_history'
+const MAX_HISTORY_ITEMS = 20
+
+function getSavedArray(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]')
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
+
 export default function App() {
   const [token, setToken] = useState(null)
   const [userId, setUserId] = useState('')
@@ -19,17 +32,32 @@ export default function App() {
   useEffect(() => {
     const savedToken = localStorage.getItem('auth_token')
     const savedUserId = localStorage.getItem('user_id')
+    const savedMessages = getSavedArray(CHAT_MESSAGES_KEY)
+    const savedHistory = getSavedArray(CHAT_HISTORY_KEY)
     if (savedToken && savedUserId) {
       setToken(savedToken)
       setUserId(savedUserId)
-      setMessages([{
+      setMessages(savedMessages.length > 0 ? savedMessages : [{
         role: 'assistant',
         content: `👋 Welcome back **${savedUserId}**!\n\nUpload a PDF, TXT, or MD file and ask me anything about it.`,
         sources: [],
         chunksUsed: 0,
       }])
+      setHistory(savedHistory.slice(-MAX_HISTORY_ITEMS))
     }
   }, [])
+
+  useEffect(() => {
+    if (token && messages.length > 0) {
+      localStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(messages))
+    }
+  }, [messages, token])
+
+  useEffect(() => {
+    if (token) {
+      localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history.slice(-MAX_HISTORY_ITEMS)))
+    }
+  }, [history, token])
 
   // Called when login succeeds
   const handleLogin = (newToken, newUserId) => {
@@ -41,6 +69,9 @@ export default function App() {
       sources: [],
       chunksUsed: 0,
     }])
+    setHistory([])
+    localStorage.removeItem(CHAT_MESSAGES_KEY)
+    localStorage.removeItem(CHAT_HISTORY_KEY)
   }
 
   // Logout
@@ -53,6 +84,8 @@ export default function App() {
     } catch (e) {}
     localStorage.removeItem('auth_token')
     localStorage.removeItem('user_id')
+    localStorage.removeItem(CHAT_MESSAGES_KEY)
+    localStorage.removeItem(CHAT_HISTORY_KEY)
     setToken(null)
     setUserId('')
     setMessages([])
@@ -111,7 +144,7 @@ export default function App() {
         ...prev,
         { role: 'user', content: userText },
         { role: 'assistant', content: data.answer },
-      ])
+      ].slice(-MAX_HISTORY_ITEMS))
 
     } catch (err) {
       setMessages(prev => [
@@ -191,13 +224,16 @@ export default function App() {
   }, [token, handleLogout])
 
   const clearChat = useCallback(() => {
-    setMessages([{
+    const clearedMessages = [{
       role: 'assistant',
       content: 'Chat cleared! Ask me anything.',
       sources: [],
       chunksUsed: 0,
-    }])
+    }]
+    setMessages(clearedMessages)
     setHistory([])
+    localStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(clearedMessages))
+    localStorage.removeItem(CHAT_HISTORY_KEY)
   }, [])
 
   // Show login page if not logged in
