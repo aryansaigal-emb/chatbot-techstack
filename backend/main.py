@@ -1,6 +1,6 @@
 # ================================================================
 #  EMB RAG Chatbot — Backend
-#  FastAPI + FAISS + sentence-transformers + Groq + Supabase Auth
+#  FastAPI + FAISS + sentence-transformers + OpenRouter + Supabase Auth
 # ================================================================
 
 import os
@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
-from groq import Groq
+from openai import OpenAI
 from supabase import create_client, Client
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +21,10 @@ import secrets
 
 # ── Load environment variables ────────────────────────────────────
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
+OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "EMB RAG Chatbot")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 FRONTEND_ORIGINS = [
@@ -30,15 +33,23 @@ FRONTEND_ORIGINS = [
     if origin.strip()
 ]
 
-if not GROQ_API_KEY:
-    raise RuntimeError("GROQ_API_KEY not found in .env")
+if not OPENROUTER_API_KEY:
+    raise RuntimeError("OPENROUTER_API_KEY not found in .env")
 if not SUPABASE_URL:
     raise RuntimeError("SUPABASE_URL not found in .env")
 if not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_KEY not found in .env")
 
-# ── Groq client ───────────────────────────────────────────────────
-groq_client = Groq(api_key=GROQ_API_KEY)
+# ── OpenRouter client ─────────────────────────────────────────────
+openrouter_headers = {"X-Title": OPENROUTER_APP_NAME}
+if OPENROUTER_SITE_URL:
+    openrouter_headers["HTTP-Referer"] = OPENROUTER_SITE_URL
+
+llm_client = OpenAI(
+    api_key=OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1",
+    default_headers=openrouter_headers,
+)
 
 # ── Supabase client ───────────────────────────────────────────────
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -67,6 +78,7 @@ app = FastAPI(title="EMB RAG Chatbot")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=FRONTEND_ORIGINS,
+    allow_origin_regex=r"https://.*\.pages\.dev|http://localhost:\d+|http://127\.0\.0\.1:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -237,7 +249,7 @@ def health():
     return {
         "status": "ok",
         "chunks_indexed": index.ntotal,
-        "model": "llama-3.1-8b-instant (Groq)",
+        "model": f"{OPENROUTER_MODEL} (OpenRouter)",
     }
 
 
@@ -465,8 +477,8 @@ def chat(
 
     messages.append({"role": "user", "content": user_content})
 
-    response = groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+    response = llm_client.chat.completions.create(
+        model=OPENROUTER_MODEL,
         messages=messages,
         max_tokens=1024,
         temperature=0.3,

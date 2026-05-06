@@ -22,7 +22,7 @@ RAG stands for Retrieval Augmented Generation. Instead of the AI guessing answer
 | Backend | FastAPI | Python API server |
 | Embeddings | sentence-transformers | Convert text to vectors |
 | Vector Search | FAISS | Find similar chunks |
-| LLM | Llama 3.1 via Groq | Generate answers |
+| LLM | OpenRouter free router | Generate answers |
 | PDF Parsing | pypdf | Extract text from PDFs |
 
 ---
@@ -34,7 +34,7 @@ RAG stands for Retrieval Augmented Generation. Instead of the AI guessing answer
 - Answers grounded only in your document
 - Source citations with every answer
 - Multi-turn conversation memory
-- Completely free AI (Groq API)
+- Free AI routing through OpenRouter (`openrouter/free`)
 
 ---
 
