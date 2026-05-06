@@ -6,8 +6,10 @@
 import os
 import io
 import json
+import re
+import unicodedata
 from typing import List
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import numpy as np
 import faiss
@@ -53,33 +55,103 @@ openrouter_headers = {
 if OPENROUTER_SITE_URL:
     openrouter_headers["HTTP-Referer"] = OPENROUTER_SITE_URL
 
-OPENROUTER_TOOLS = [
-    {
-        "type": "openrouter:datetime",
-        "parameters": {
-            "timezone": OPENROUTER_DATETIME_TIMEZONE,
-        },
+WEB_SEARCH_TOOL = {
+    "type": "openrouter:web_search",
+    "parameters": {
+        "engine": "auto",
+        "max_results": 2,
+        "max_total_results": 2,
+        "search_context_size": "low",
     },
-    {
-        "type": "openrouter:web_search",
-        "parameters": {
-            "engine": "auto",
-            "max_results": 5,
-            "max_total_results": 10,
-            "search_context_size": "medium",
-        },
-    },
-]
+}
+
+DATE_TIME_KEYWORDS = (
+    "date",
+    "time",
+    "today",
+    "tomorrow",
+    "yesterday",
+    "day",
+    "month",
+    "year",
+    "timezone",
+    "current time",
+    "current date",
+)
+
+WEB_SEARCH_KEYWORDS = (
+    "latest",
+    "recent",
+    "news",
+    "search",
+    "web",
+    "internet",
+    "online",
+    "live",
+    "current",
+    "today's",
+    "today ",
+    "now",
+)
 
 
-def call_openrouter(messages: List[dict]) -> str:
+def wants_datetime_tool(text: str) -> bool:
+    lowered = f" {text.lower()} "
+    return any(keyword in lowered for keyword in DATE_TIME_KEYWORDS)
+
+
+def wants_web_search_tool(text: str) -> bool:
+    lowered = f" {text.lower()} "
+    if wants_datetime_tool(text) and not any(word in lowered for word in (" latest", " news", " search", " web", " internet", " recent", " live")):
+        return False
+    return any(keyword in lowered for keyword in WEB_SEARCH_KEYWORDS)
+
+
+def select_openrouter_tools(user_message: str) -> List[dict]:
+    tools = []
+    if wants_web_search_tool(user_message):
+        tools.append(WEB_SEARCH_TOOL)
+    return tools
+
+
+def get_current_datetime_tool() -> str:
+    if OPENROUTER_DATETIME_TIMEZONE.lower() in ("asia/kolkata", "asia/calcutta", "ist"):
+        tz = timezone(timedelta(hours=5, minutes=30), name="IST")
+    else:
+        tz = timezone.utc
+    now = datetime.now(tz)
+    return now.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+
+
+def clean_llm_answer(answer: str) -> str:
+    answer = answer.strip()
+    answer = unicodedata.normalize("NFKC", answer)
+    answer = answer.translate(str.maketrans({
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u202f": " ",
+        "\u00a0": " ",
+    }))
+    answer = re.sub(r"【[^】]*】", "", answer)
+    answer = re.sub(r"ã.*?ã", "", answer)
+    answer = re.sub(r"[ \t]+\n", "\n", answer)
+    answer = re.sub(r"\n{3,}", "\n\n", answer)
+    return answer.strip()
+
+
+def call_openrouter(messages: List[dict], tools: List[dict] | None = None) -> str:
     payload = {
         "model": OPENROUTER_MODEL,
         "messages": messages,
-        "tools": OPENROUTER_TOOLS,
         "max_tokens": 1024,
         "temperature": 0.3,
     }
+    if tools:
+        payload["tools"] = tools
 
     try:
         response = requests.post(
@@ -99,7 +171,7 @@ def call_openrouter(messages: List[dict]) -> str:
 
     data = response.json()
     try:
-        return data["choices"][0]["message"]["content"] or ""
+        return clean_llm_answer(data["choices"][0]["message"]["content"] or "")
     except (KeyError, IndexError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="Unexpected OpenRouter response.") from exc
 
@@ -505,6 +577,14 @@ def chat(
 ):
     chunks = retrieve(req.message, top_k=req.top_k)
     sources = list({c["source"] for c in chunks})
+    tools = select_openrouter_tools(req.message)
+
+    if wants_datetime_tool(req.message) and not tools and not chunks:
+        return ChatResponse(
+            answer=f"The current date and time is **{get_current_datetime_tool()}**.",
+            sources=[],
+            chunks_used=0,
+        )
 
     messages = []
     messages.append({
@@ -512,15 +592,28 @@ def chat(
         "content": (
             "You are a helpful AI assistant. "
             "Answer questions based on provided document context. "
-            "Be concise, accurate, and always cite your sources."
+            "If tool context is provided, use that tool context directly. "
+            "Be concise, accurate, and use clean markdown formatting. "
+            "Use plain ASCII punctuation. "
+            "For web search answers, start with the direct answer, then add 2-4 short bullets. "
+            "Do not include bracketed citation markers such as [1], line numbers, or source snippets. "
+            "Do not dump raw tool output."
         ),
     })
+
+    if wants_datetime_tool(req.message):
+        messages.append({
+            "role": "system",
+            "content": f"Current date/time tool result: {get_current_datetime_tool()}.",
+        })
 
     for msg in req.history[-8:]:
         messages.append({"role": msg.role, "content": msg.content})
 
     if chunks:
         user_content = build_rag_prompt(req.message, chunks)
+    elif tools or wants_datetime_tool(req.message):
+        user_content = req.message
     else:
         user_content = (
             req.message
@@ -529,7 +622,9 @@ def chat(
 
     messages.append({"role": "user", "content": user_content})
 
-    answer = call_openrouter(messages)
+    answer = call_openrouter(messages, tools=tools)
+    if not answer:
+        answer = "I could not generate a response from the current OpenRouter model. Please try again."
 
     return ChatResponse(
         answer=answer,
