@@ -30,3 +30,47 @@ html, body, #root {
 button { cursor: pointer; font-family: inherit; }
 textarea, input { font-family: inherit; }
 code { font-family: 'JetBrains Mono', monospace; }
+
+.streamdown-message {
+  overflow-wrap: anywhere;
+}
+
+.streamdown-message :where(p, ul, ol, pre, blockquote, table) {
+  margin: 0.55rem 0;
+}
+
+.streamdown-message :where(p:first-child, ul:first-child, ol:first-child, pre:first-child, blockquote:first-child) {
+  margin-top: 0;
+}
+
+.streamdown-message :where(p:last-child, ul:last-child, ol:last-child, pre:last-child, blockquote:last-child) {
+  margin-bottom: 0;
+}
+
+.streamdown-message :where(ul, ol) {
+  padding-left: 1.25rem;
+}
+
+.streamdown-message :where(a) {
+  color: var(--green);
+}
+
+.streamdown-message :where(code) {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.87em;
+}
+
+.streamdown-message :where(pre) {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: #101010;
+}
+
+.streamdown-message :where(pre code) {
+  background: transparent;
+  padding: 0;
+}

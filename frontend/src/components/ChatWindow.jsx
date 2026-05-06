@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react'
+import { Streamdown } from 'streamdown'
+import 'streamdown/styles.css'
 
 function SourceBadge({ source }) {
   const isPdf = source.endsWith('.pdf')
@@ -52,12 +54,28 @@ function ThinkingDots() {
   )
 }
 
-function formatText(text) {
-  return text
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/`(.*?)`/g, '<code style="background:rgba(255,255,255,0.07);padding:2px 6px;border-radius:4px;font-size:0.87em">$1</code>')
-    .replace(/\n/g, '<br/>')
+function UserText({ text }) {
+  const lines = text.split('\n')
+  return lines.map((line, index) => (
+    <span key={index}>
+      {line}
+      {index < lines.length - 1 && <br />}
+    </span>
+  ))
+}
+
+function MessageContent({ msg, loading }) {
+  if (msg.role === 'assistant') {
+    return (
+      <div className="streamdown-message">
+        <Streamdown isAnimating={loading}>
+          {msg.content}
+        </Streamdown>
+      </div>
+    )
+  }
+
+  return <UserText text={msg.content} />
 }
 
 export default function ChatWindow({ messages, loading }) {
@@ -117,8 +135,9 @@ export default function ChatWindow({ messages, loading }) {
                   lineHeight: '1.7',
                   color: '#e0e0e0',
                 }}
-                dangerouslySetInnerHTML={{ __html: formatText(msg.content) }}
-              />
+              >
+                <MessageContent msg={msg} loading={loading && i === messages.length - 1} />
+              </div>
 
               {/* Source badges */}
               {msg.sources && msg.sources.length > 0 && (
