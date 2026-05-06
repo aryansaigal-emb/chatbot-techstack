@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { apiUrl } from './api.js'
+import { API_HEADERS, apiUrl } from './api.js'
 
 export default function Login({ onLogin }) {
   const [mode, setMode] = useState('signup')
@@ -41,7 +41,7 @@ export default function Login({ onLogin }) {
     try {
       const res = await fetch(apiUrl('/signup'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...API_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: normalizedUserId,
           passcode: passcode.trim(),
@@ -76,7 +76,7 @@ export default function Login({ onLogin }) {
     try {
       const res = await fetch(apiUrl('/login'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...API_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: normalizedUserId,
           passcode: passcode.trim(),
@@ -112,7 +112,7 @@ export default function Login({ onLogin }) {
     try {
       const res = await fetch(apiUrl('/forgot-password'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...API_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: normalizedUserId }),
       })
 
@@ -149,7 +149,7 @@ export default function Login({ onLogin }) {
     try {
       const res = await fetch(apiUrl('/reset-password'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...API_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: normalizedUserId,
           new_passcode: newPasscode.trim(),

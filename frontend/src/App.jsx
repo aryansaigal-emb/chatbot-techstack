@@ -3,7 +3,7 @@ import Login from './login.jsx'
 import Sidebar from './components/sidebar.jsx'
 import ChatWindow from './components/ChatWindow.jsx'
 import InputBar from './components/InputBar.jsx'
-import { apiUrl } from './api.js'
+import { API_HEADERS, apiUrl } from './api.js'
 import './App.css'
 
 export default function App() {
@@ -48,7 +48,7 @@ export default function App() {
     try {
       await fetch(apiUrl('/logout'), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { ...API_HEADERS, Authorization: `Bearer ${token}` },
       })
     } catch (e) {}
     localStorage.removeItem('auth_token')
@@ -75,6 +75,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...API_HEADERS,
           Authorization: `Bearer ${token}`,   // send token with every request
         },
         body: JSON.stringify({
@@ -147,6 +148,7 @@ export default function App() {
       const res = await fetch(apiUrl('/ingest/file'), {
         method: 'POST',
         headers: {
+          ...API_HEADERS,
           Authorization: `Bearer ${token}`,   // send token
         },
         body: formData,
