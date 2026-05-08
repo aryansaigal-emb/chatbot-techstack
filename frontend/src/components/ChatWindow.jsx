@@ -1,76 +1,140 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Streamdown } from 'streamdown'
+import mermaid from 'mermaid'
 import 'streamdown/styles.css'
 
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  securityLevel: 'strict',
+  flowchart: { htmlLabels: false, curve: 'basis' },
+  sequence: { mirrorActors: false },
+})
+
 function SourceBadge({ source }) {
-  const isPdf = source.endsWith('.pdf')
+  const label = source.split('/').pop()
   return (
-    <span style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '4px',
-      background: 'rgba(16,163,127,0.1)',
-      color: '#10a37f',
-      border: '1px solid rgba(16,163,127,0.25)',
-      borderRadius: '6px',
-      padding: '2px 8px',
-      fontSize: '11px',
-      fontFamily: 'JetBrains Mono, monospace',
-      fontWeight: '600',
-    }}>
-      {isPdf ? '📕' : '📄'} {source}
+    <span className="source-badge">
+      <span>Source</span>
+      {label}
     </span>
   )
 }
 
 function ThinkingDots() {
   return (
-    <div style={{
-      display: 'flex',
-      gap: '5px',
-      alignItems: 'center',
-      padding: '2px 0',
-    }}>
-      {[0, 1, 2].map(i => (
-        <div
-          key={i}
-          style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            background: '#10a37f',
-            animation: 'thinking 1.2s ease-in-out infinite',
-            animationDelay: `${i * 0.2}s`,
-          }}
-        />
-      ))}
-      <style>{`
-        @keyframes thinking {
-          0%, 80%, 100% { opacity: 0.15; transform: scale(0.8); }
-          40% { opacity: 1; transform: scale(1.0); }
-        }
-      `}</style>
+    <div className="thinking-dots" aria-label="Assistant is thinking">
+      <span />
+      <span />
+      <span />
     </div>
   )
 }
 
 function UserText({ text }) {
-  const lines = text.split('\n')
-  return lines.map((line, index) => (
-    <span key={index}>
+  return text.split('\n').map((line, index, lines) => (
+    <span key={`${line}-${index}`}>
       {line}
       {index < lines.length - 1 && <br />}
     </span>
   ))
 }
 
+function splitMermaidBlocks(content) {
+  const parts = []
+  const pattern = /```(?:mermaid|mmd)\s*\n([\s\S]*?)```/gi
+  let lastIndex = 0
+  let match
+
+  while ((match = pattern.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'markdown', value: content.slice(lastIndex, match.index) })
+    }
+    parts.push({ type: 'mermaid', value: match[1].trim() })
+    lastIndex = pattern.lastIndex
+  }
+
+  if (lastIndex < content.length) {
+    parts.push({ type: 'markdown', value: content.slice(lastIndex) })
+  }
+
+  return parts.length > 0 ? parts : [{ type: 'markdown', value: content }]
+}
+
+function MermaidDiagram({ code }) {
+  const reactId = useId()
+  const [svg, setSvg] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const id = `mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}-${Date.now()}`
+
+    async function renderDiagram() {
+      try {
+        await mermaid.parse(code)
+        const result = await mermaid.render(id, code)
+        if (!cancelled) {
+          setSvg(result.svg)
+          setError('')
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSvg('')
+          setError(err?.message || 'Could not render Mermaid diagram.')
+        }
+      }
+    }
+
+    renderDiagram()
+
+    return () => {
+      cancelled = true
+    }
+  }, [code, reactId])
+
+  return (
+    <div className="mermaid-card">
+      <div className="mermaid-card-header">
+        <span>Mermaid diagram</span>
+      </div>
+      {svg ? (
+        <div
+          className="mermaid-canvas"
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      ) : (
+        <div className="mermaid-error">
+          <strong>Diagram render failed.</strong>
+          <span>{error}</span>
+          <pre>{code}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AssistantContent({ content, loading }) {
+  const parts = useMemo(() => splitMermaidBlocks(content), [content])
+
+  return (
+    <>
+      {parts.map((part, index) => (
+        part.type === 'mermaid' ? (
+          <MermaidDiagram key={`mermaid-${index}-${part.value.slice(0, 18)}`} code={part.value} />
+        ) : part.value.trim() ? (
+          <Streamdown key={`markdown-${index}`} isAnimating={loading}>{part.value}</Streamdown>
+        ) : null
+      ))}
+    </>
+  )
+}
+
 function MessageContent({ msg, loading }) {
   if (msg.role === 'assistant') {
     return (
       <div className="streamdown-message">
-        <Streamdown isAnimating={loading}>
-          {msg.content}
-        </Streamdown>
+        <AssistantContent content={msg.content} loading={loading} />
       </div>
     )
   }
@@ -78,7 +142,7 @@ function MessageContent({ msg, loading }) {
   return <UserText text={msg.content} />
 }
 
-export default function ChatWindow({ messages, loading }) {
+export default function ChatWindow({ messages, loading, userId, uploadedFiles }) {
   const bottomRef = useRef(null)
 
   useEffect(() => {
@@ -86,115 +150,60 @@ export default function ChatWindow({ messages, loading }) {
   }, [messages, loading])
 
   return (
-    <div style={{
-      flex: 1,
-      overflowY: 'auto',
-      padding: '32px 24px',
-    }}>
-      <div style={{ maxWidth: '760px', margin: '0 auto' }}>
+    <section className="chat-shell">
+      <header className="chat-topbar">
+        <div>
+          <p className="eyebrow">Document assistant</p>
+          <h1>Ask your knowledge base</h1>
+        </div>
+        <div className="status-cluster" aria-label="Workspace status">
+          <span>{uploadedFiles.length} files</span>
+          <span>{messages.filter(message => message.role === 'user').length} questions</span>
+          <span>{userId}</span>
+        </div>
+      </header>
 
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            style={{
-              display: 'flex',
-              flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
-              gap: '12px',
-              alignItems: 'flex-start',
-              marginBottom: '28px',
-            }}
-          >
-            {/* Avatar */}
-            <div style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '50%',
-              background: msg.role === 'user' ? '#2a2a2a' : '#10a37f',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '15px',
-              fontWeight: '700',
-              flexShrink: 0,
-              color: 'white',
-            }}>
-              {msg.role === 'user' ? 'U' : '🌿'}
-            </div>
-
-            <div style={{ maxWidth: '80%' }}>
-              {/* Bubble */}
-              <div
-                style={{
-                  background: msg.role === 'user' ? '#1e3a2f' : '#1a1a1a',
-                  border: `1px solid ${msg.role === 'user' ? '#2a5a40' : '#2a2a2a'}`,
-                  borderRadius: msg.role === 'user'
-                    ? '18px 4px 18px 18px'
-                    : '4px 18px 18px 18px',
-                  padding: '13px 17px',
-                  fontSize: '14px',
-                  lineHeight: '1.7',
-                  color: '#e0e0e0',
-                }}
-              >
-                <MessageContent msg={msg} loading={loading && i === messages.length - 1} />
-              </div>
-
-              {/* Source badges */}
-              {msg.sources && msg.sources.length > 0 && (
-                <div style={{
-                  marginTop: '8px',
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: '6px',
-                  alignItems: 'center',
-                  paddingLeft: '4px',
-                }}>
-                  <span style={{ fontSize: '11px', color: '#555' }}>
-                    {msg.chunksUsed} chunk{msg.chunksUsed !== 1 ? 's' : ''} retrieved ·
-                  </span>
-                  {msg.sources.map(s => (
-                    <SourceBadge key={s} source={s} />
-                  ))}
+      <div className="chat-scroll">
+        <div className="message-stack">
+          {messages.map((msg, index) => (
+            <article
+              className={`message-row ${msg.role === 'user' ? 'from-user' : 'from-assistant'}`}
+              key={`${msg.role}-${index}-${msg.content.slice(0, 20)}`}
+            >
+              <div className="message-avatar">{msg.role === 'user' ? 'You' : 'AI'}</div>
+              <div className="message-body">
+                <div className="message-label">{msg.role === 'user' ? 'You' : 'EMB Assistant'}</div>
+                <div className="message-bubble">
+                  <MessageContent msg={msg} loading={loading && index === messages.length - 1} />
                 </div>
-              )}
-            </div>
-          </div>
-        ))}
 
-        {/* Thinking indicator */}
-        {loading && (
-          <div style={{
-            display: 'flex',
-            gap: '12px',
-            alignItems: 'flex-start',
-            marginBottom: '28px',
-          }}>
-            <div style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '50%',
-              background: '#10a37f',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '15px',
-              flexShrink: 0,
-            }}>
-              🌿
-            </div>
-            <div style={{
-              background: '#1a1a1a',
-              border: '1px solid #2a2a2a',
-              borderRadius: '4px 18px 18px 18px',
-              padding: '13px 17px',
-            }}>
-              <ThinkingDots />
-            </div>
-          </div>
-        )}
+                {msg.sources && msg.sources.length > 0 && (
+                  <div className="source-row">
+                    <span>{msg.chunksUsed} chunk{msg.chunksUsed !== 1 ? 's' : ''} retrieved</span>
+                    {msg.sources.map(source => (
+                      <SourceBadge key={source} source={source} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </article>
+          ))}
 
-        <div ref={bottomRef} />
+          {loading && (
+            <article className="message-row from-assistant">
+              <div className="message-avatar">AI</div>
+              <div className="message-body">
+                <div className="message-label">EMB Assistant</div>
+                <div className="message-bubble compact">
+                  <ThinkingDots />
+                </div>
+              </div>
+            </article>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
       </div>
-    </div>
+    </section>
   )
 }

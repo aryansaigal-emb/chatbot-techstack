@@ -11,6 +11,8 @@ build/
 
 # Environment variables - NEVER commit this
 .env
+frontend/.env
+backend/mcp_servers.json
 
 # Node
 node_modules/

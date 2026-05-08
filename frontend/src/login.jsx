@@ -57,7 +57,7 @@ export default function Login({ onLogin }) {
 
       setMode('login')
       setNotice('Signup successful. Login to open the chatbot.')
-    } catch (err) {
+    } catch {
       setError('Cannot connect to server. Make sure backend is running.')
     } finally {
       setLoading(false)
@@ -93,7 +93,7 @@ export default function Login({ onLogin }) {
       localStorage.setItem('auth_token', data.token)
       localStorage.setItem('user_id', normalizedUserId)
       onLogin(data.token, normalizedUserId)
-    } catch (err) {
+    } catch {
       setError('Cannot connect to server. Make sure backend is running.')
     } finally {
       setLoading(false)
@@ -125,7 +125,7 @@ export default function Login({ onLogin }) {
 
       setMode('reset')
       setNotice('User found. Enter a new 6-digit passcode.')
-    } catch (err) {
+    } catch {
       setError('Cannot connect to server. Make sure backend is running.')
     } finally {
       setLoading(false)
@@ -167,7 +167,7 @@ export default function Login({ onLogin }) {
       setNewPasscode('')
       setMode('login')
       setNotice('Passcode reset successful. Login with your new passcode.')
-    } catch (err) {
+    } catch {
       setError('Cannot connect to server. Make sure backend is running.')
     } finally {
       setLoading(false)

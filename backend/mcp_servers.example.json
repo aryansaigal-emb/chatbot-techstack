@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "example-filesystem",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\path\\to\\your\\chatbot techstack"
+      ],
+      "env": {}
+    }
+  ]
+}

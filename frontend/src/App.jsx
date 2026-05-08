@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import Login from './login.jsx'
 import Sidebar from './components/sidebar.jsx'
 import ChatWindow from './components/ChatWindow.jsx'
@@ -8,7 +8,20 @@ import './App.css'
 
 const CHAT_MESSAGES_KEY = 'chat_messages'
 const CHAT_HISTORY_KEY = 'chat_history'
+const CHAT_SESSIONS_KEY = 'chat_sessions'
 const MAX_HISTORY_ITEMS = 20
+const MAX_SESSIONS = 30
+
+const makeId = () => `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+const welcomeMessage = (name, returning = false) => ({
+  role: 'assistant',
+  content: returning
+    ? `Welcome back **${name}**.\n\nUpload a document, spreadsheet, slide deck, or image, then ask me anything about it.`
+    : `Welcome **${name}**.\n\nUpload a document, spreadsheet, slide deck, or image from the sidebar and start asking questions.`,
+  sources: [],
+  chunksUsed: 0,
+})
 
 function getSavedArray(key) {
   try {
@@ -19,33 +32,115 @@ function getSavedArray(key) {
   }
 }
 
+function getConversationTitle(messages) {
+  const firstQuestion = messages.find(message => message.role === 'user')?.content
+  if (!firstQuestion) return 'New conversation'
+  return firstQuestion.length > 48 ? `${firstQuestion.slice(0, 48)}...` : firstQuestion
+}
+
+function getConversationPreview(messages) {
+  const lastMessage = [...messages].reverse().find(message => message.content)
+  if (!lastMessage) return 'No messages yet'
+  const clean = lastMessage.content.replace(/\s+/g, ' ').trim()
+  return clean.length > 72 ? `${clean.slice(0, 72)}...` : clean
+}
+
+function getBackendHistory(messages) {
+  return messages
+    .filter(message => ['user', 'assistant'].includes(message.role))
+    .filter(message => message.content && !message.content.startsWith('Welcome '))
+    .map(({ role, content }) => ({ role, content }))
+    .slice(-MAX_HISTORY_ITEMS)
+}
+
 export default function App() {
   const [token, setToken] = useState(null)
   const [userId, setUserId] = useState('')
   const [messages, setMessages] = useState([])
   const [history, setHistory] = useState([])
+  const [chatSessions, setChatSessions] = useState([])
+  const [activeSessionId, setActiveSessionId] = useState('')
   const [loading, setLoading] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState([])
   const [uploading, setUploading] = useState(false)
+  const [memoryLoaded, setMemoryLoaded] = useState(false)
+  const memorySaveTimerRef = useRef(null)
 
-  // Check if already logged in on page load
   useEffect(() => {
     const savedToken = localStorage.getItem('auth_token')
     const savedUserId = localStorage.getItem('user_id')
     const savedMessages = getSavedArray(CHAT_MESSAGES_KEY)
     const savedHistory = getSavedArray(CHAT_HISTORY_KEY)
+    const savedSessions = getSavedArray(CHAT_SESSIONS_KEY)
+
     if (savedToken && savedUserId) {
+      const initialMessages = savedMessages.length > 0
+        ? savedMessages
+        : [welcomeMessage(savedUserId, true)]
+      const fallbackSession = {
+        id: makeId(),
+        title: getConversationTitle(initialMessages),
+        preview: getConversationPreview(initialMessages),
+        messages: initialMessages,
+        updatedAt: Date.now(),
+      }
+      const sessions = savedSessions.length > 0 ? savedSessions : [fallbackSession]
+      const activeId = sessions[0]?.id || fallbackSession.id
+
       setToken(savedToken)
       setUserId(savedUserId)
-      setMessages(savedMessages.length > 0 ? savedMessages : [{
-        role: 'assistant',
-        content: `👋 Welcome back **${savedUserId}**!\n\nUpload a PDF, TXT, or MD file and ask me anything about it.`,
-        sources: [],
-        chunksUsed: 0,
-      }])
+      setMessages(sessions.find(session => session.id === activeId)?.messages || initialMessages)
       setHistory(savedHistory.slice(-MAX_HISTORY_ITEMS))
+      setChatSessions(sessions.slice(0, MAX_SESSIONS))
+      setActiveSessionId(activeId)
     }
   }, [])
+
+  useEffect(() => {
+    if (!token || !userId) {
+      setMemoryLoaded(false)
+      return
+    }
+
+    let cancelled = false
+
+    async function loadMemory() {
+      try {
+        const res = await fetch(apiUrl('/memory'), {
+          headers: { ...API_HEADERS, Authorization: `Bearer ${token}` },
+        })
+
+        if (!res.ok) return
+
+        const data = await res.json()
+        const dbSessions = Array.isArray(data.sessions) ? data.sessions : []
+        const dbHistory = Array.isArray(data.history) ? data.history : []
+
+        if (!cancelled && dbSessions.length > 0) {
+          const activeId = data.active_session_id || dbSessions[0].id
+          const activeSession = dbSessions.find(session => session.id === activeId) || dbSessions[0]
+
+          setChatSessions(dbSessions.slice(0, MAX_SESSIONS))
+          setActiveSessionId(activeSession.id)
+          setMessages(activeSession.messages || [welcomeMessage(userId, true)])
+          setHistory(dbHistory.slice(-MAX_HISTORY_ITEMS))
+          localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(dbSessions.slice(0, MAX_SESSIONS)))
+          localStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(activeSession.messages || []))
+          localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(dbHistory.slice(-MAX_HISTORY_ITEMS)))
+        }
+      } catch {
+        // Browser storage remains the fallback when database memory is unavailable.
+      } finally {
+        if (!cancelled) setMemoryLoaded(true)
+      }
+    }
+
+    loadMemory()
+
+    return () => {
+      cancelled = true
+    }
+  }, [token, userId])
 
   useEffect(() => {
     if (token && messages.length > 0) {
@@ -59,41 +154,108 @@ export default function App() {
     }
   }, [history, token])
 
-  // Called when login succeeds
+  useEffect(() => {
+    if (token && chatSessions.length > 0) {
+      localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions.slice(0, MAX_SESSIONS)))
+    }
+  }, [chatSessions, token])
+
+  useEffect(() => {
+    if (!token || !memoryLoaded || chatSessions.length === 0) return
+
+    if (memorySaveTimerRef.current) {
+      clearTimeout(memorySaveTimerRef.current)
+    }
+
+    memorySaveTimerRef.current = setTimeout(async () => {
+      try {
+        await fetch(apiUrl('/memory'), {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...API_HEADERS,
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            sessions: chatSessions.slice(0, MAX_SESSIONS),
+            active_session_id: activeSessionId,
+            history: history.slice(-MAX_HISTORY_ITEMS),
+          }),
+        })
+      } catch {
+        // Local storage already has the latest chat if the database write fails.
+      }
+    }, 600)
+
+    return () => {
+      if (memorySaveTimerRef.current) {
+        clearTimeout(memorySaveTimerRef.current)
+      }
+    }
+  }, [activeSessionId, chatSessions, history, memoryLoaded, token])
+
+  useEffect(() => {
+    if (!token || !activeSessionId || messages.length === 0) return
+
+    setChatSessions(prev => {
+      const nextSession = {
+        id: activeSessionId,
+        title: getConversationTitle(messages),
+        preview: getConversationPreview(messages),
+        messages,
+        updatedAt: Date.now(),
+      }
+      const withoutCurrent = prev.filter(session => session.id !== activeSessionId)
+      return [nextSession, ...withoutCurrent].slice(0, MAX_SESSIONS)
+    })
+  }, [activeSessionId, messages, token])
+
   const handleLogin = (newToken, newUserId) => {
+    const newMessages = [welcomeMessage(newUserId)]
+    const newSession = {
+      id: makeId(),
+      title: 'New conversation',
+      preview: 'Ready for your first question',
+      messages: newMessages,
+      updatedAt: Date.now(),
+    }
+
     setToken(newToken)
     setUserId(newUserId)
-    setMessages([{
-      role: 'assistant',
-      content: `👋 Welcome **${newUserId}**!\n\nUpload a PDF, TXT, or MD file using the sidebar and ask me anything about it.`,
-      sources: [],
-      chunksUsed: 0,
-    }])
+    setMessages(newMessages)
     setHistory([])
+    setChatSessions([newSession])
+    setActiveSessionId(newSession.id)
+    setMemoryLoaded(false)
     localStorage.removeItem(CHAT_MESSAGES_KEY)
     localStorage.removeItem(CHAT_HISTORY_KEY)
+    localStorage.removeItem(CHAT_SESSIONS_KEY)
   }
 
-  // Logout
   const handleLogout = useCallback(async () => {
     try {
       await fetch(apiUrl('/logout'), {
         method: 'POST',
         headers: { ...API_HEADERS, Authorization: `Bearer ${token}` },
       })
-    } catch (e) {}
+    } catch {
+      // Logging out locally should still work if the API is unavailable.
+    }
     localStorage.removeItem('auth_token')
     localStorage.removeItem('user_id')
     localStorage.removeItem(CHAT_MESSAGES_KEY)
     localStorage.removeItem(CHAT_HISTORY_KEY)
+    localStorage.removeItem(CHAT_SESSIONS_KEY)
     setToken(null)
     setUserId('')
     setMessages([])
     setHistory([])
+    setChatSessions([])
+    setActiveSessionId('')
+    setMemoryLoaded(false)
     setUploadedFiles([])
   }, [token])
 
-  // Send message
   const sendMessage = useCallback(async (userText) => {
     if (!userText.trim() || loading) return
 
@@ -109,11 +271,11 @@ export default function App() {
         headers: {
           'Content-Type': 'application/json',
           ...API_HEADERS,
-          Authorization: `Bearer ${token}`,   // send token with every request
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           message: userText,
-          history: history,
+          history,
           top_k: 4,
         }),
       })
@@ -135,8 +297,8 @@ export default function App() {
         {
           role: 'assistant',
           content: data.answer,
-          sources: data.sources,
-          chunksUsed: data.chunks_used,
+          sources: data.sources || [],
+          chunksUsed: data.chunks_used || 0,
         },
       ])
 
@@ -145,13 +307,12 @@ export default function App() {
         { role: 'user', content: userText },
         { role: 'assistant', content: data.answer },
       ].slice(-MAX_HISTORY_ITEMS))
-
     } catch (err) {
       setMessages(prev => [
         ...prev,
         {
           role: 'assistant',
-          content: `⚠️ Error: ${err.message}`,
+          content: `Error: ${err.message}`,
           sources: [],
           chunksUsed: 0,
         },
@@ -161,14 +322,13 @@ export default function App() {
     }
   }, [history, loading, token, handleLogout])
 
-  // Upload file
   const handleFileUpload = useCallback(async (file) => {
     setUploading(true)
     setMessages(prev => [
       ...prev,
       {
         role: 'assistant',
-        content: `⏳ Uploading **${file.name}**...`,
+        content: `Uploading **${file.name}**...`,
         sources: [],
         chunksUsed: 0,
       },
@@ -182,7 +342,7 @@ export default function App() {
         method: 'POST',
         headers: {
           ...API_HEADERS,
-          Authorization: `Bearer ${token}`,   // send token
+          Authorization: `Bearer ${token}`,
         },
         body: formData,
       })
@@ -203,7 +363,7 @@ export default function App() {
         ...prev.slice(0, -1),
         {
           role: 'assistant',
-          content: `✅ **${file.name}** uploaded!\n${data.message}\n\nNow ask me anything about it.`,
+          content: `**${file.name}** uploaded.\n${data.message}\n\nNow ask me anything about it.`,
           sources: [],
           chunksUsed: 0,
         },
@@ -213,7 +373,7 @@ export default function App() {
         ...prev.slice(0, -1),
         {
           role: 'assistant',
-          content: `❌ Upload failed: ${err.message}`,
+          content: `Upload failed: ${err.message}`,
           sources: [],
           chunksUsed: 0,
         },
@@ -223,39 +383,81 @@ export default function App() {
     }
   }, [token, handleLogout])
 
-  const clearChat = useCallback(() => {
-    const clearedMessages = [{
+  const startNewChat = useCallback(() => {
+    const newMessages = [{
       role: 'assistant',
-      content: 'Chat cleared! Ask me anything.',
+      content: 'New chat started. Ask me anything about your documents.',
       sources: [],
       chunksUsed: 0,
     }]
-    setMessages(clearedMessages)
+    const newSessionId = makeId()
+
+    setActiveSessionId(newSessionId)
+    setMessages(newMessages)
     setHistory([])
-    localStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(clearedMessages))
+    localStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(newMessages))
     localStorage.removeItem(CHAT_HISTORY_KEY)
   }, [])
 
-  // Show login page if not logged in
+  const selectChat = useCallback((sessionId) => {
+    const session = chatSessions.find(item => item.id === sessionId)
+    if (!session) return
+    setActiveSessionId(session.id)
+    setMessages(session.messages)
+    setHistory(getBackendHistory(session.messages))
+  }, [chatSessions])
+
+  const clearAllChats = useCallback(() => {
+    const newMessages = [welcomeMessage(userId, true)]
+    const newSession = {
+      id: makeId(),
+      title: 'New conversation',
+      preview: 'History cleared',
+      messages: newMessages,
+      updatedAt: Date.now(),
+    }
+
+    setActiveSessionId(newSession.id)
+    setMessages(newMessages)
+    setHistory([])
+    setChatSessions([newSession])
+    localStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(newMessages))
+    localStorage.removeItem(CHAT_HISTORY_KEY)
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify([newSession]))
+
+    fetch(apiUrl('/memory'), {
+      method: 'DELETE',
+      headers: { ...API_HEADERS, Authorization: `Bearer ${token}` },
+    }).catch(() => {})
+  }, [token, userId])
+
   if (!token) {
     return <Login onLogin={handleLogin} />
   }
 
-  // Show chatbot if logged in
   return (
     <div className="app-container">
       <Sidebar
         uploadedFiles={uploadedFiles}
         onFileUpload={handleFileUpload}
-        onClearChat={clearChat}
+        onNewChat={startNewChat}
+        onSelectChat={selectChat}
+        onClearHistory={clearAllChats}
+        chatSessions={chatSessions}
+        activeSessionId={activeSessionId}
         uploading={uploading}
         userId={userId}
         onLogout={handleLogout}
       />
-      <div className="main-panel">
-        <ChatWindow messages={messages} loading={loading} />
-        <InputBar onSend={sendMessage} loading={loading} />
-      </div>
+      <main className="main-panel">
+        <ChatWindow
+          messages={messages}
+          loading={loading}
+          userId={userId}
+          uploadedFiles={uploadedFiles}
+        />
+        <InputBar onSend={sendMessage} loading={loading} hasFiles={uploadedFiles.length > 0} />
+      </main>
     </div>
   )
 }
