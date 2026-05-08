@@ -76,7 +76,7 @@ export default function InputBar({ onSend, loading, hasFiles }) {
         </div>
 
         <div className="composer-note">
-          Answers are grounded in uploaded PDF, TXT, and MD files when available.
+          Answers can use uploaded documents, spreadsheets, slides, images, and chat context.
         </div>
       </div>
     </footer>

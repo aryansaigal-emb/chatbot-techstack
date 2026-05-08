@@ -61,10 +61,61 @@ function splitMermaidBlocks(content) {
   return parts.length > 0 ? parts : [{ type: 'markdown', value: content }]
 }
 
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+function getSvgSize(svgElement) {
+  const viewBox = svgElement.getAttribute('viewBox')?.split(/\s+/).map(Number)
+  if (viewBox?.length === 4 && viewBox.every(Number.isFinite)) {
+    return {
+      width: Math.max(Math.ceil(viewBox[2]), 1),
+      height: Math.max(Math.ceil(viewBox[3]), 1),
+    }
+  }
+
+  const rect = svgElement.getBoundingClientRect()
+  return {
+    width: Math.max(Math.ceil(rect.width), 1),
+    height: Math.max(Math.ceil(rect.height), 1),
+  }
+}
+
+function prepareSvgForDownload(svgElement) {
+  const clone = svgElement.cloneNode(true)
+  const { width, height } = getSvgSize(svgElement)
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  clone.setAttribute('width', String(width))
+  clone.setAttribute('height', String(height))
+
+  const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  background.setAttribute('x', '0')
+  background.setAttribute('y', '0')
+  background.setAttribute('width', '100%')
+  background.setAttribute('height', '100%')
+  background.setAttribute('fill', '#101616')
+  clone.insertBefore(background, clone.firstChild)
+
+  return {
+    svgText: new XMLSerializer().serializeToString(clone),
+    width,
+    height,
+  }
+}
+
 function MermaidDiagram({ code }) {
   const reactId = useId()
+  const canvasRef = useRef(null)
   const [svg, setSvg] = useState('')
   const [error, setError] = useState('')
+  const [downloadError, setDownloadError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -93,13 +144,81 @@ function MermaidDiagram({ code }) {
     }
   }, [code, reactId])
 
+  function getRenderedSvg() {
+    return canvasRef.current?.querySelector('svg')
+  }
+
+  function downloadSvg() {
+    const svgElement = getRenderedSvg()
+    if (!svgElement) {
+      setDownloadError('Render the diagram before downloading.')
+      return
+    }
+
+    const { svgText } = prepareSvgForDownload(svgElement)
+    downloadBlob(
+      new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }),
+      `mermaid-diagram-${Date.now()}.svg`,
+    )
+    setDownloadError('')
+  }
+
+  function downloadPng() {
+    const svgElement = getRenderedSvg()
+    if (!svgElement) {
+      setDownloadError('Render the diagram before downloading.')
+      return
+    }
+
+    const { svgText, width, height } = prepareSvgForDownload(svgElement)
+    const image = new Image()
+    const svgUrl = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }))
+
+    image.onload = () => {
+      const scale = Math.min(Math.max(window.devicePixelRatio || 1, 1), 3)
+      const canvas = document.createElement('canvas')
+      canvas.width = width * scale
+      canvas.height = height * scale
+
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#101616'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.scale(scale, scale)
+      context.drawImage(image, 0, 0, width, height)
+
+      canvas.toBlob((blob) => {
+        URL.revokeObjectURL(svgUrl)
+        if (blob) {
+          downloadBlob(blob, `mermaid-diagram-${Date.now()}.png`)
+          setDownloadError('')
+        } else {
+          setDownloadError('Could not create PNG download.')
+        }
+      }, 'image/png')
+    }
+
+    image.onerror = () => {
+      URL.revokeObjectURL(svgUrl)
+      setDownloadError('Could not prepare PNG download.')
+    }
+
+    image.src = svgUrl
+  }
+
   return (
     <div className="mermaid-card">
       <div className="mermaid-card-header">
         <span>Mermaid diagram</span>
+        {svg && (
+          <div className="mermaid-download-actions" aria-label="Diagram download options">
+            <button type="button" onClick={downloadPng}>PNG</button>
+            <button type="button" onClick={downloadSvg}>SVG</button>
+          </div>
+        )}
       </div>
       {svg ? (
         <div
+          ref={canvasRef}
           className="mermaid-canvas"
           dangerouslySetInnerHTML={{ __html: svg }}
         />
@@ -110,6 +229,7 @@ function MermaidDiagram({ code }) {
           <pre>{code}</pre>
         </div>
       )}
+      {downloadError && <div className="mermaid-download-error">{downloadError}</div>}
     </div>
   )
 }
@@ -153,8 +273,8 @@ export default function ChatWindow({ messages, loading, userId, uploadedFiles })
     <section className="chat-shell">
       <header className="chat-topbar">
         <div>
-          <p className="eyebrow">Document assistant</p>
-          <h1>Ask your knowledge base</h1>
+          <p className="eyebrow">AI workspace</p>
+          <h1>Intelligent chat assistant</h1>
         </div>
         <div className="status-cluster" aria-label="Workspace status">
           <span>{uploadedFiles.length} files</span>

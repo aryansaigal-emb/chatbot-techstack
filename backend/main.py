@@ -1196,6 +1196,13 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     return active_sessions[token]
 
 
+def normalize_auth_identifier(value: str) -> str:
+    identifier = value.strip()
+    if "@" in identifier:
+        return identifier.lower()
+    return identifier.upper()
+
+
 def get_supabase_users(user_id: str, columns: str = "*") -> List[dict]:
     try:
         result = supabase.table("users").select(columns).eq(
@@ -1482,16 +1489,16 @@ def health():
 @app.post("/signup")
 def signup(req: SignupRequest):
     try:
-        user_id = req.user_id.strip().upper()
+        user_id = normalize_auth_identifier(req.user_id)
         passcode = req.passcode.strip()
 
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required.")
+            raise HTTPException(status_code=400, detail="Email address is required.")
         if len(passcode) != 6 or not passcode.isdigit():
             raise HTTPException(status_code=400, detail="Passcode must be 6 digits.")
 
         if user_exists(user_id):
-            raise HTTPException(status_code=409, detail="User ID already exists.")
+            raise HTTPException(status_code=409, detail="Account already exists.")
 
         try:
             supabase.table("users").insert({
@@ -1519,13 +1526,13 @@ def signup(req: SignupRequest):
 @app.post("/forgot-password")
 def forgot_password(req: UserLookupRequest):
     try:
-        user_id = req.user_id.strip().upper()
+        user_id = normalize_auth_identifier(req.user_id)
 
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required.")
+            raise HTTPException(status_code=400, detail="Email address is required.")
 
         if not user_exists(user_id):
-            raise HTTPException(status_code=404, detail="User ID not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         return {
             "success": True,
@@ -1542,15 +1549,15 @@ def forgot_password(req: UserLookupRequest):
 @app.post("/reset-password")
 def reset_password(req: ResetPasswordRequest):
     try:
-        user_id = req.user_id.strip().upper()
+        user_id = normalize_auth_identifier(req.user_id)
         new_passcode = req.new_passcode.strip()
 
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required.")
+            raise HTTPException(status_code=400, detail="Email address is required.")
         if len(new_passcode) != 6 or not new_passcode.isdigit():
             raise HTTPException(status_code=400, detail="New passcode must be 6 digits.")
         if not user_exists(user_id):
-            raise HTTPException(status_code=404, detail="User ID not found.")
+            raise HTTPException(status_code=404, detail="Account not found.")
 
         supabase_users = get_supabase_users(user_id, "user_id")
         if supabase_users:
@@ -1579,7 +1586,7 @@ def reset_password(req: ResetPasswordRequest):
 @app.post("/login", response_model=LoginResponse)
 def login(req: LoginRequest):
     try:
-        user_id = req.user_id.strip().upper()
+        user_id = normalize_auth_identifier(req.user_id)
         passcode = req.passcode.strip()
 
         users = get_supabase_users(user_id)
@@ -1603,7 +1610,7 @@ def login(req: LoginRequest):
             if DEV_USERS.get(user_id) != passcode:
                 raise HTTPException(
                     status_code=401,
-                    detail="User ID not found or incorrect passcode."
+                    detail="Account not found or incorrect passcode."
                 )
 
         token = secrets.token_hex(32)

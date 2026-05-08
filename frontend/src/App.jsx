@@ -17,11 +17,33 @@ const makeId = () => `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`
 const welcomeMessage = (name, returning = false) => ({
   role: 'assistant',
   content: returning
-    ? `Welcome back **${name}**.\n\nUpload a document, spreadsheet, slide deck, or image, then ask me anything about it.`
-    : `Welcome **${name}**.\n\nUpload a document, spreadsheet, slide deck, or image from the sidebar and start asking questions.`,
+    ? `Welcome back **${name}**.\n\nAsk a question, continue a conversation, or bring in files and tools whenever you need more context.`
+    : `Welcome **${name}**.\n\nStart with a question, explore an idea, or add files when you want the assistant to work with extra context.`,
   sources: [],
   chunksUsed: 0,
 })
+
+function isLegacyWelcomeMessage(message) {
+  if (message?.role !== 'assistant' || !message?.content) return false
+  return (
+    message.content.startsWith('Welcome ') ||
+    message.content.startsWith('Welcome back ') ||
+    message.content.includes('Upload a document, spreadsheet, slide deck, or image') ||
+    message.content.includes('Upload a document or ask me anything about it') ||
+    message.content.includes('Ask me anything about your documents')
+  )
+}
+
+function refreshWelcomeMessages(messages, name, returning = true) {
+  if (!Array.isArray(messages) || messages.length === 0) return messages
+
+  return messages.map((message, index) => {
+    if (index === 0 && isLegacyWelcomeMessage(message)) {
+      return welcomeMessage(name, returning)
+    }
+    return message
+  })
+}
 
 function getSavedArray(key) {
   try {
@@ -75,7 +97,7 @@ export default function App() {
 
     if (savedToken && savedUserId) {
       const initialMessages = savedMessages.length > 0
-        ? savedMessages
+        ? refreshWelcomeMessages(savedMessages, savedUserId, true)
         : [welcomeMessage(savedUserId, true)]
       const fallbackSession = {
         id: makeId(),
@@ -85,13 +107,17 @@ export default function App() {
         updatedAt: Date.now(),
       }
       const sessions = savedSessions.length > 0 ? savedSessions : [fallbackSession]
+      const refreshedSessions = sessions.map(session => ({
+        ...session,
+        messages: refreshWelcomeMessages(session.messages || [], savedUserId, true),
+      }))
       const activeId = sessions[0]?.id || fallbackSession.id
 
       setToken(savedToken)
       setUserId(savedUserId)
-      setMessages(sessions.find(session => session.id === activeId)?.messages || initialMessages)
+      setMessages(refreshedSessions.find(session => session.id === activeId)?.messages || initialMessages)
       setHistory(savedHistory.slice(-MAX_HISTORY_ITEMS))
-      setChatSessions(sessions.slice(0, MAX_SESSIONS))
+      setChatSessions(refreshedSessions.slice(0, MAX_SESSIONS))
       setActiveSessionId(activeId)
     }
   }, [])
@@ -118,13 +144,17 @@ export default function App() {
 
         if (!cancelled && dbSessions.length > 0) {
           const activeId = data.active_session_id || dbSessions[0].id
-          const activeSession = dbSessions.find(session => session.id === activeId) || dbSessions[0]
+          const refreshedSessions = dbSessions.map(session => ({
+            ...session,
+            messages: refreshWelcomeMessages(session.messages || [], userId, true),
+          }))
+          const activeSession = refreshedSessions.find(session => session.id === activeId) || refreshedSessions[0]
 
-          setChatSessions(dbSessions.slice(0, MAX_SESSIONS))
+          setChatSessions(refreshedSessions.slice(0, MAX_SESSIONS))
           setActiveSessionId(activeSession.id)
           setMessages(activeSession.messages || [welcomeMessage(userId, true)])
           setHistory(dbHistory.slice(-MAX_HISTORY_ITEMS))
-          localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(dbSessions.slice(0, MAX_SESSIONS)))
+          localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(refreshedSessions.slice(0, MAX_SESSIONS)))
           localStorage.setItem(CHAT_MESSAGES_KEY, JSON.stringify(activeSession.messages || []))
           localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(dbHistory.slice(-MAX_HISTORY_ITEMS)))
         }
@@ -386,7 +416,7 @@ export default function App() {
   const startNewChat = useCallback(() => {
     const newMessages = [{
       role: 'assistant',
-      content: 'New chat started. Ask me anything about your documents.',
+      content: 'New chat started. Ask a question, explore an idea, or add files when extra context would help.',
       sources: [],
       chunksUsed: 0,
     }]
@@ -403,9 +433,10 @@ export default function App() {
     const session = chatSessions.find(item => item.id === sessionId)
     if (!session) return
     setActiveSessionId(session.id)
-    setMessages(session.messages)
-    setHistory(getBackendHistory(session.messages))
-  }, [chatSessions])
+    const refreshedMessages = refreshWelcomeMessages(session.messages, userId, true)
+    setMessages(refreshedMessages)
+    setHistory(getBackendHistory(refreshedMessages))
+  }, [chatSessions, userId])
 
   const clearAllChats = useCallback(() => {
     const newMessages = [welcomeMessage(userId, true)]
