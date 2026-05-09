@@ -1,5 +1,5 @@
 # ================================================================
-#  EMB RAG Chatbot — Backend
+#  AI Workspace Chatbot - Backend
 #  FastAPI + FAISS + sentence-transformers + OpenRouter + Supabase Auth
 # ================================================================
 
@@ -28,7 +28,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL")
-OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "EMB RAG Chatbot")
+OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "AI Workspace Chatbot")
 OPENROUTER_DATETIME_TIMEZONE = os.getenv("OPENROUTER_DATETIME_TIMEZONE", "Asia/Kolkata")
 MCP_SERVERS_JSON = os.getenv("MCP_SERVERS_JSON", "")
 WORKSPACE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -151,6 +151,7 @@ def wants_datetime_tool(text: str) -> bool:
         r"\b(?:current|today'?s)\s+(?:date|time)\b",
         r"\bwhat\s+day\s+is\s+(?:it|today)\b",
         r"\bwhat\s+(?:is\s+)?today'?s\s+date\b",
+        r"\bwhat\s+(?:is\s+)?today\s+date\b",
         r"\btell\s+me\s+(?:the\s+)?(?:date|time)\b",
     )
     if any(re.search(pattern, lowered) for pattern in explicit_patterns):
@@ -176,7 +177,38 @@ def wants_web_search_tool(text: str) -> bool:
 
 def wants_mermaid_diagram(text: str) -> bool:
     lowered = text.lower()
-    return any(keyword in lowered for keyword in DIAGRAM_KEYWORDS)
+    if any(phrase in lowered for phrase in (
+        "test prompts",
+        "list prompts",
+        "give me prompts",
+        "demo prompts",
+        "verification checklist",
+        "demo flow",
+        "demo script",
+        "safe github",
+        "github checklist",
+        "explain how",
+        "how to test",
+    )):
+        return False
+
+    explicit_actions = (
+        "create",
+        "generate",
+        "draw",
+        "make",
+        "render",
+        "build",
+        "show me",
+        "give me a",
+        "give me an",
+        "give me two",
+        "give me three",
+    )
+    has_diagram_keyword = any(keyword in lowered for keyword in DIAGRAM_KEYWORDS)
+    has_action = any(re.search(rf"\b{re.escape(action)}\b", lowered) for action in explicit_actions)
+    has_fenced_request = "```mermaid" in lowered
+    return has_diagram_keyword and (has_action or has_fenced_request)
 
 
 def mermaid_request_count(text: str) -> int:
@@ -226,6 +258,8 @@ def mermaid_title_for(text: str, diagram_type: str) -> str:
         return "Umbrella Decision"
     if "morning" in lowered:
         return "Morning Routine"
+    if "password reset" in lowered or "passcode reset" in lowered or "forgot password" in lowered:
+        return "Login and Password Reset"
     if "average person" in lowered or "spends their day" in lowered:
         return "Average Day"
     if "login" in lowered or "upload" in lowered or "rag" in lowered:
@@ -240,6 +274,21 @@ def mermaid_code_for(text: str, diagram_type: str) -> str:
     title = mermaid_title_for(text, diagram_type)
 
     if diagram_type == "flowchart":
+        if "password reset" in lowered or "passcode reset" in lowered or "forgot password" in lowered:
+            return """flowchart TD
+    A[Open login page] --> B{Has an account?}
+    B -->|Yes| C[Enter email or user ID]
+    B -->|No| D[Create account]
+    D --> C
+    C --> E[Enter passcode]
+    E --> F{Passcode correct?}
+    F -->|Yes| G[Open chat workspace]
+    F -->|No| H{Forgot password?}
+    H -->|No| E
+    H -->|Yes| I[Request password reset]
+    I --> J[Verify account]
+    J --> K[Set new passcode]
+    K --> E"""
         if "umbrella" in lowered or "rain" in lowered:
             return """flowchart TD
     A[Check weather] --> B{Is it raining now?}
@@ -924,18 +973,46 @@ def direct_mcp_answer(user_message: str) -> str | None:
         content = unwrap_mcp_content(result)
         return clean_llm_answer(f"MCP filesystem result for `{label}`:\n\n```text\n{content}\n```")
 
+    def resolve_natural_path(path_value: str) -> str:
+        cleaned = path_value.strip(" .'\"").lower()
+        cleaned = re.sub(r"\b(the|a|an)\b", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        root_phrases = (
+            "project root",
+            "root",
+            "workspace",
+            "project folder",
+            "main folder",
+            "current project",
+        )
+        if cleaned in root_phrases or "project root" in cleaned:
+            return "."
+        if "backend" in cleaned:
+            return "backend"
+        if "frontend" in cleaned:
+            return "frontend"
+        if cleaned in ("files", "folder", "directory", "files in project"):
+            return "."
+        return path_value.strip(" .'\"")
+
     path_match = re.search(
         r"(?:read|open|show|list|files?\s+in|directory\s+of)\s+([a-zA-Z0-9_./\\ -]+)",
         user_message,
         flags=re.IGNORECASE,
     )
-    path = "backend"
+    path = "."
     if path_match:
-        path = path_match.group(1).strip(" .")
+        path = path_match.group(1).strip()
         path = path.replace(" folder", "").replace(" directory", "").strip()
+        path = resolve_natural_path(path)
 
     if "backend" in lowered and ("folder" in lowered or "directory" in lowered):
         path = "backend"
+    elif "frontend" in lowered and ("folder" in lowered or "directory" in lowered):
+        path = "frontend"
+    elif any(phrase in lowered for phrase in ("project root", "root folder", "project folder", "workspace root")):
+        path = "."
 
     if any(word in lowered for word in ("list", "files", "folder", "directory")):
         result = run_tool("mcp__workspace__list_directory", {"path": path})
@@ -959,6 +1036,121 @@ def direct_mcp_answer(user_message: str) -> str | None:
         return format_text_result(result, f"search `{query}`")
 
     return None
+
+
+def chatbot_demo_script_answer(user_message: str) -> str | None:
+    lowered = user_message.lower()
+    if "chatbot-demo-script" not in lowered and "demo script" not in lowered:
+        return None
+
+    wants_prompts = any(word in lowered for word in ("prompt", "prompts", "test"))
+    wants_github = "github" in lowered or "push" in lowered or "commit" in lowered
+    wants_commands = "command" in lowered or "start" in lowered or "run" in lowered
+    wants_architecture = "architecture" in lowered or "explain" in lowered
+    wants_demo = any(phrase in lowered for phrase in (
+        "complete demo",
+        "demo flow",
+        "demo script",
+        "5-minute",
+        "five minute",
+        "presentation",
+    ))
+
+    sections = []
+
+    if wants_demo or not any((wants_prompts, wants_github, wants_commands, wants_architecture)):
+        sections.append("""**Complete Demo Flow**
+1. Start backend and frontend.
+2. Log in with an email or old user ID like `EMB001`.
+3. Start a new chat and show the general welcome message.
+4. Upload a supported file and ask a question about it.
+5. Ask for a Mermaid diagram and show the rendered card.
+6. Download the diagram as PNG and SVG.
+7. Use MCP to list files in the project root.
+8. Refresh the app and show saved chat history.
+9. Explain the architecture briefly.
+10. Run build and Git safety checks before pushing.""")
+
+    if wants_commands:
+        sections.append("""**Start Commands**
+Backend:
+```powershell
+$env:BACKEND_PORT='8002'; D:\\Python\\python.exe backend\\run_backend.py
+```
+
+Frontend:
+```powershell
+cd "C:\\Users\\arush\\Desktop\\chatbot techstack\\frontend"
+npm run dev
+```""")
+
+    if wants_prompts:
+        sections.append("""**Test Prompts**
+MCP:
+```text
+Use MCP to list files in the project root.
+```
+```text
+Use MCP to list files in the backend folder.
+```
+
+Mermaid:
+```text
+Create a Mermaid flowchart for a user login and password reset process.
+```
+```text
+Create a Mermaid sequence diagram showing frontend, backend, Supabase, and the model provider.
+```
+
+File upload:
+```text
+Summarize this file in five bullet points.
+```
+```text
+What are the key risks, deadlines, or action items mentioned in this file?
+```
+
+Memory:
+```text
+Remember that my demo topic is the chatbot platform.
+```
+```text
+What was my demo topic?
+```""")
+
+    if wants_architecture:
+        sections.append("""**Architecture Explanation**
+- React frontend handles login, chat UI, uploads, Mermaid rendering, and diagram downloads.
+- FastAPI backend handles auth, chat, file ingestion, memory, MCP calls, and model calls.
+- Supabase stores users and chat memory when configured.
+- MCP connects the backend to tool servers such as the filesystem server.
+- Mermaid code is generated by the backend and rendered in the browser.""")
+
+    if wants_github:
+        sections.append("""**Safe GitHub Checklist**
+1. Run `git status --short`.
+2. Do not stage `backend/.env`, `frontend/.env`, or `backend/mcp_servers.json`.
+3. Stage only code files and safe examples.
+4. Run backend compile and frontend build.
+5. Run `git diff --cached --check`.
+6. Search staged diff for secrets before committing.
+7. Commit with a clear message.
+8. Push the current branch.""")
+
+    if not sections:
+        sections.append("""**Complete Demo Flow**
+1. Start backend and frontend.
+2. Log in with an email or old user ID like `EMB001`.
+3. Start a new chat and show the general welcome message.
+4. Upload a supported file and ask a question about it.
+5. Ask for a Mermaid diagram and show the rendered card.
+6. Download the diagram as PNG and SVG.
+7. Use MCP to list files in the project root.
+8. Refresh the app and show saved chat history.
+9. Explain the architecture briefly.
+10. Run build and Git safety checks before pushing.""")
+
+    return "\n\n".join(sections)
 
 
 def get_current_datetime_tool() -> str:
@@ -1123,7 +1315,7 @@ DEV_USERS = {
 }
 
 # ── FastAPI app ───────────────────────────────────────────────────
-app = FastAPI(title="EMB RAG Chatbot")
+app = FastAPI(title="AI Workspace Chatbot")
 
 app.add_middleware(
     CORSMiddleware,
@@ -1493,7 +1685,7 @@ def signup(req: SignupRequest):
         passcode = req.passcode.strip()
 
         if not user_id:
-            raise HTTPException(status_code=400, detail="Email address is required.")
+            raise HTTPException(status_code=400, detail="Email or user ID is required.")
         if len(passcode) != 6 or not passcode.isdigit():
             raise HTTPException(status_code=400, detail="Passcode must be 6 digits.")
 
@@ -1529,7 +1721,7 @@ def forgot_password(req: UserLookupRequest):
         user_id = normalize_auth_identifier(req.user_id)
 
         if not user_id:
-            raise HTTPException(status_code=400, detail="Email address is required.")
+            raise HTTPException(status_code=400, detail="Email or user ID is required.")
 
         if not user_exists(user_id):
             raise HTTPException(status_code=404, detail="Account not found.")
@@ -1553,7 +1745,7 @@ def reset_password(req: ResetPasswordRequest):
         new_passcode = req.new_passcode.strip()
 
         if not user_id:
-            raise HTTPException(status_code=400, detail="Email address is required.")
+            raise HTTPException(status_code=400, detail="Email or user ID is required.")
         if len(new_passcode) != 6 or not new_passcode.isdigit():
             raise HTTPException(status_code=400, detail="New passcode must be 6 digits.")
         if not user_exists(user_id):
@@ -1727,6 +1919,14 @@ def chat(
     req: ChatRequest,
     user_id: str = Depends(verify_token)
 ):
+    demo_script_answer = chatbot_demo_script_answer(req.message)
+    if demo_script_answer:
+        return ChatResponse(
+            answer=demo_script_answer,
+            sources=[],
+            chunks_used=0,
+        )
+
     direct_answer = direct_mcp_answer(req.message)
     if direct_answer:
         return ChatResponse(

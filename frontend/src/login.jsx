@@ -12,19 +12,19 @@ const MODE_CONTENT = {
   signup: {
     eyebrow: 'Create access',
     title: 'Start your secure workspace',
-    subtitle: 'Create your account with an email address and 6-digit passcode.',
+    subtitle: 'Create your account with an email or user ID and 6-digit passcode.',
     button: 'Create account',
   },
   login: {
     eyebrow: 'Welcome back',
-    title: 'Sign in to EMB Assistant',
-    subtitle: 'Continue your document chats, diagrams, MCP tools, and saved memory.',
+    title: 'Sign in to AI Workspace',
+    subtitle: 'Continue your conversations, tools, diagrams, and saved history.',
     button: 'Sign in',
   },
   forgot: {
     eyebrow: 'Account lookup',
     title: 'Find your account',
-    subtitle: 'Enter your email address and we will prepare your passcode reset flow.',
+    subtitle: 'Enter your email or user ID and we will prepare your passcode reset flow.',
     button: 'Find account',
   },
   reset: {
@@ -33,6 +33,12 @@ const MODE_CONTENT = {
     subtitle: 'Choose a fresh 6-digit passcode for your chatbot workspace.',
     button: 'Reset passcode',
   },
+}
+
+function normalizeIdentifier(value) {
+  const identifier = value.trim()
+  if (identifier.includes('@')) return identifier.toLowerCase()
+  return identifier.toUpperCase()
 }
 
 export default function Login({ onLogin }) {
@@ -44,7 +50,7 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
-  const normalizedEmail = userId.trim().toLowerCase()
+  const normalizedIdentifier = normalizeIdentifier(userId)
   const isSignup = mode === 'signup'
   const isLogin = mode === 'login'
   const isForgot = mode === 'forgot'
@@ -71,14 +77,17 @@ export default function Login({ onLogin }) {
     return true
   }
 
-  const validateEmail = () => {
-    if (!normalizedEmail) {
-      setError('Please enter your email address')
+  const validateIdentifier = () => {
+    if (!normalizedIdentifier) {
+      setError('Please enter your email or user ID')
       return false
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-      setError('Please enter a valid email address')
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedIdentifier)
+    const isUserId = /^[a-zA-Z0-9_-]{3,40}$/.test(userId.trim())
+
+    if (!isEmail && !isUserId) {
+      setError('Please enter a valid email or user ID')
       return false
     }
 
@@ -86,7 +95,7 @@ export default function Login({ onLogin }) {
   }
 
   const handleSignup = async () => {
-    if (!validateEmail()) return
+    if (!validateIdentifier()) return
 
     if (!passcode.trim()) {
       setError('Please enter your passcode')
@@ -103,7 +112,7 @@ export default function Login({ onLogin }) {
         method: 'POST',
         headers: { ...API_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: normalizedEmail,
+          user_id: normalizedIdentifier,
           passcode: passcode.trim(),
         }),
       })
@@ -125,7 +134,7 @@ export default function Login({ onLogin }) {
   }
 
   const handleLogin = async () => {
-    if (!validateEmail()) return
+    if (!validateIdentifier()) return
 
     if (!passcode.trim()) {
       setError('Please enter your passcode')
@@ -140,7 +149,7 @@ export default function Login({ onLogin }) {
         method: 'POST',
         headers: { ...API_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: normalizedEmail,
+          user_id: normalizedIdentifier,
           passcode: passcode.trim(),
         }),
       })
@@ -153,8 +162,8 @@ export default function Login({ onLogin }) {
       }
 
       localStorage.setItem('auth_token', data.token)
-      localStorage.setItem('user_id', normalizedEmail)
-      onLogin(data.token, normalizedEmail)
+      localStorage.setItem('user_id', normalizedIdentifier)
+      onLogin(data.token, normalizedIdentifier)
     } catch {
       setError('Cannot connect to server. Make sure backend is running.')
     } finally {
@@ -163,7 +172,7 @@ export default function Login({ onLogin }) {
   }
 
   const handleForgotPassword = async () => {
-    if (!validateEmail()) return
+    if (!validateIdentifier()) return
 
     setLoading(true)
     resetMessages()
@@ -172,7 +181,7 @@ export default function Login({ onLogin }) {
       const res = await fetch(apiUrl('/forgot-password'), {
         method: 'POST',
         headers: { ...API_HEADERS, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: normalizedEmail }),
+        body: JSON.stringify({ user_id: normalizedIdentifier }),
       })
 
       const data = await res.json()
@@ -192,7 +201,7 @@ export default function Login({ onLogin }) {
   }
 
   const handleResetPassword = async () => {
-    if (!validateEmail()) return
+    if (!validateIdentifier()) return
 
     if (!newPasscode.trim()) {
       setError('Please enter your new passcode')
@@ -209,7 +218,7 @@ export default function Login({ onLogin }) {
         method: 'POST',
         headers: { ...API_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: normalizedEmail,
+          user_id: normalizedIdentifier,
           new_passcode: newPasscode.trim(),
         }),
       })
@@ -245,12 +254,12 @@ export default function Login({ onLogin }) {
 
   return (
     <main className="auth-page">
-      <section className="auth-hero" aria-label="EMB Assistant overview">
+      <section className="auth-hero" aria-label="AI Workspace overview">
         <div className="auth-brand">
           <div className="auth-brand-mark">AI</div>
           <div>
-            <div className="auth-brand-name">EMB Assistant</div>
-            <div className="auth-brand-subtitle">RAG chatbot workspace</div>
+            <div className="auth-brand-name">AI Workspace</div>
+            <div className="auth-brand-subtitle">Intelligent assistant</div>
           </div>
         </div>
 
@@ -294,13 +303,13 @@ export default function Login({ onLogin }) {
 
         <div className="auth-form">
           <label className="auth-field">
-            <span>Email address</span>
+            <span>Email or User ID</span>
             <input
-              type="email"
+              type="text"
               value={userId}
               onChange={event => setUserId(event.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="name@company.com"
+              placeholder="name@company.com or EMB001"
               autoComplete="username"
             />
           </label>

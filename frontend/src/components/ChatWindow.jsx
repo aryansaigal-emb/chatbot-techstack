@@ -292,7 +292,7 @@ export default function ChatWindow({ messages, loading, userId, uploadedFiles })
             >
               <div className="message-avatar">{msg.role === 'user' ? 'You' : 'AI'}</div>
               <div className="message-body">
-                <div className="message-label">{msg.role === 'user' ? 'You' : 'EMB Assistant'}</div>
+                <div className="message-label">{msg.role === 'user' ? 'You' : 'AI Assistant'}</div>
                 <div className="message-bubble">
                   <MessageContent msg={msg} loading={loading && index === messages.length - 1} />
                 </div>
@@ -313,7 +313,7 @@ export default function ChatWindow({ messages, loading, userId, uploadedFiles })
             <article className="message-row from-assistant">
               <div className="message-avatar">AI</div>
               <div className="message-body">
-                <div className="message-label">EMB Assistant</div>
+                <div className="message-label">AI Assistant</div>
                 <div className="message-bubble compact">
                   <ThinkingDots />
                 </div>

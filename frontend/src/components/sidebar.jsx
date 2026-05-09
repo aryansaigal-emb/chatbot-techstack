@@ -43,8 +43,8 @@ export default function Sidebar({
       <div className="brand-block">
         <div className="brand-mark">AI</div>
         <div>
-          <div className="brand-name">EMB Global</div>
-          <div className="brand-subtitle">RAG workspace</div>
+          <div className="brand-name">AI Workspace</div>
+          <div className="brand-subtitle">Intelligent assistant</div>
         </div>
       </div>
 
